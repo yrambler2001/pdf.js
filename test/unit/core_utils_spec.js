@@ -13,20 +13,54 @@
  * limitations under the License.
  */
 
-import { Dict, Ref } from "../../src/core/primitives.js";
 import {
+  arrayBuffersToBytes,
   encodeToXmlString,
   escapePDFName,
+  escapeString,
   getInheritableProperty,
+  getSizeInBytes,
+  isAscii,
   isWhiteSpace,
   log2,
+  numberToString,
   parseXFAPath,
+  recoverJsURL,
+  stringToUTF16HexString,
+  stringToUTF16String,
   toRomanNumerals,
   validateCSSFont,
 } from "../../src/core/core_utils.js";
+import { Dict, Ref } from "../../src/core/primitives.js";
 import { XRefMock } from "./test_utils.js";
 
 describe("core_utils", function () {
+  describe("arrayBuffersToBytes", function () {
+    it("handles zero ArrayBuffers", function () {
+      const bytes = arrayBuffersToBytes([]);
+
+      expect(bytes).toEqual(new Uint8Array(0));
+    });
+
+    it("handles one ArrayBuffer", function () {
+      const buffer = new Uint8Array([1, 2, 3]).buffer;
+      const bytes = arrayBuffersToBytes([buffer]);
+
+      expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+      // Ensure that the fast-path works correctly.
+      expect(bytes.buffer).toBe(buffer);
+    });
+
+    it("handles multiple ArrayBuffers", function () {
+      const buffer1 = new Uint8Array([1, 2, 3]).buffer,
+        buffer2 = new Uint8Array(0).buffer,
+        buffer3 = new Uint8Array([4, 5]).buffer;
+      const bytes = arrayBuffersToBytes([buffer1, buffer2, buffer3]);
+
+      expect(bytes).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+    });
+  });
+
   describe("getInheritableProperty", function () {
     it("handles non-dictionary arguments", function () {
       expect(getInheritableProperty({ dict: null, key: "foo" })).toEqual(
@@ -177,6 +211,21 @@ describe("core_utils", function () {
     });
   });
 
+  describe("numberToString", function () {
+    it("should stringify integers", function () {
+      expect(numberToString(1)).toEqual("1");
+      expect(numberToString(0)).toEqual("0");
+      expect(numberToString(-1)).toEqual("-1");
+    });
+
+    it("should stringify floats", function () {
+      expect(numberToString(1.0)).toEqual("1");
+      expect(numberToString(1.2)).toEqual("1.2");
+      expect(numberToString(1.23)).toEqual("1.23");
+      expect(numberToString(1.234)).toEqual("1.23");
+    });
+  });
+
   describe("isWhiteSpace", function () {
     it("handles space characters", function () {
       expect(isWhiteSpace(0x20)).toEqual(true);
@@ -206,6 +255,39 @@ describe("core_utils", function () {
     });
   });
 
+  describe("recoverJsURL", function () {
+    it("should get valid URLs without `newWindow` property", function () {
+      const inputs = [
+        "window.open('https://test.local')",
+        "window.open('https://test.local', true)",
+        "app.launchURL('https://test.local')",
+        "app.launchURL('https://test.local', false)",
+        "xfa.host.gotoURL('https://test.local')",
+        "xfa.host.gotoURL('https://test.local', true)",
+      ];
+
+      for (const input of inputs) {
+        expect(recoverJsURL(input)).toEqual({
+          url: "https://test.local",
+          newWindow: false,
+        });
+      }
+    });
+
+    it("should get valid URLs with `newWindow` property", function () {
+      const input = "app.launchURL('https://test.local', true)";
+      expect(recoverJsURL(input)).toEqual({
+        url: "https://test.local",
+        newWindow: true,
+      });
+    });
+
+    it("should not get invalid URLs", function () {
+      const input = "navigateToUrl('https://test.local')";
+      expect(recoverJsURL(input)).toBeNull();
+    });
+  });
+
   describe("escapePDFName", function () {
     it("should escape PDF name", function () {
       expect(escapePDFName("hello")).toEqual("hello");
@@ -217,6 +299,14 @@ describe("core_utils", function () {
       expect(escapePDFName("#h#e#l#l#o")).toEqual("#23h#23e#23l#23l#23o");
       expect(escapePDFName("#()<>[]{}/%")).toEqual(
         "#23#28#29#3c#3e#5b#5d#7b#7d#2f#25"
+      );
+    });
+  });
+
+  describe("escapeString", function () {
+    it("should escape (, ), \\n, \\r, and \\", function () {
+      expect(escapeString("((a\\a))\n(b(b\\b)\rb)")).toEqual(
+        "\\(\\(a\\\\a\\)\\)\\n\\(b\\(b\\\\b\\)\\rb\\)"
       );
     });
   });
@@ -331,6 +421,69 @@ describe("core_utils", function () {
       cssFontInfo.italicAngle = 2.718;
       validateCSSFont(cssFontInfo);
       expect(cssFontInfo.italicAngle).toEqual("2.718");
+    });
+  });
+
+  describe("isAscii", function () {
+    it("handles ascii/non-ascii strings", function () {
+      expect(isAscii("hello world")).toEqual(true);
+      expect(isAscii("こんにちは世界の")).toEqual(false);
+      expect(isAscii("hello world in Japanese is こんにちは世界の")).toEqual(
+        false
+      );
+    });
+  });
+
+  describe("stringToUTF16HexString", function () {
+    it("should encode a string in UTF16 hexadecimal format", function () {
+      expect(stringToUTF16HexString("hello world")).toEqual(
+        "00680065006c006c006f00200077006f0072006c0064"
+      );
+
+      expect(stringToUTF16HexString("こんにちは世界の")).toEqual(
+        "30533093306b3061306f4e16754c306e"
+      );
+    });
+  });
+
+  describe("stringToUTF16String", function () {
+    it("should encode a string in UTF16", function () {
+      expect(stringToUTF16String("hello world")).toEqual(
+        "\0h\0e\0l\0l\0o\0 \0w\0o\0r\0l\0d"
+      );
+
+      expect(stringToUTF16String("こんにちは世界の")).toEqual(
+        "\x30\x53\x30\x93\x30\x6b\x30\x61\x30\x6f\x4e\x16\x75\x4c\x30\x6e"
+      );
+    });
+
+    it("should encode a string in UTF16BE with a BOM", function () {
+      expect(
+        stringToUTF16String("hello world", /* bigEndian = */ true)
+      ).toEqual("\xfe\xff\0h\0e\0l\0l\0o\0 \0w\0o\0r\0l\0d");
+
+      expect(
+        stringToUTF16String("こんにちは世界の", /* bigEndian = */ true)
+      ).toEqual(
+        "\xfe\xff\x30\x53\x30\x93\x30\x6b\x30\x61\x30\x6f\x4e\x16\x75\x4c\x30\x6e"
+      );
+    });
+  });
+
+  describe("getSizeInBytes", function () {
+    it("should get the size in bytes to use to represent a positive integer", function () {
+      expect(getSizeInBytes(0)).toEqual(0);
+      for (let i = 1; i <= 0xff; i++) {
+        expect(getSizeInBytes(i)).toEqual(1);
+      }
+
+      for (let i = 0x100; i <= 0xffff; i += 0x100) {
+        expect(getSizeInBytes(i)).toEqual(2);
+      }
+
+      for (let i = 0x10000; i <= 0xffffff; i += 0x10000) {
+        expect(getSizeInBytes(i)).toEqual(3);
+      }
     });
   });
 });

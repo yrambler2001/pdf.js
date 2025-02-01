@@ -13,10 +13,11 @@
  * limitations under the License.
  */
 
-import { FontType, info } from "../shared/util.js";
 import { getEncoding, StandardEncoding } from "./encodings.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
+import { getLookupTableFactory } from "./core_utils.js";
 import { getUnicodeForGlyph } from "./unicode.js";
+import { info } from "../shared/util.js";
 
 // Accented characters have issues on Windows and Linux. When this flag is
 // enabled glyphs that use seac and seac style endchar operators are truncated
@@ -78,32 +79,6 @@ const MacStandardGlyphOrdering = [
   "threequarters", "franc", "Gbreve", "gbreve", "Idotaccent", "Scedilla",
   "scedilla", "Cacute", "cacute", "Ccaron", "ccaron", "dcroat"];
 
-function getFontType(type, subtype, isStandardFont = false) {
-  switch (type) {
-    case "Type1":
-      if (isStandardFont) {
-        return FontType.TYPE1STANDARD;
-      }
-      return subtype === "Type1C" ? FontType.TYPE1C : FontType.TYPE1;
-    case "CIDFontType0":
-      return subtype === "CIDFontType0C"
-        ? FontType.CIDFONTTYPE0C
-        : FontType.CIDFONTTYPE0;
-    case "OpenType":
-      return FontType.OPENTYPE;
-    case "TrueType":
-      return FontType.TRUETYPE;
-    case "CIDFontType2":
-      return FontType.CIDFONTTYPE2;
-    case "MMType1":
-      return FontType.MMTYPE1;
-    case "Type0":
-      return FontType.TYPE0;
-    default:
-      return FontType.UNKNOWN;
-  }
-}
-
 // Some bad PDF generators, e.g. Scribus PDF, include glyph names
 // in a 'uniXXXX' format -- attempting to recover proper ones.
 function recoverGlyphName(name, glyphsUnicodeMap) {
@@ -142,11 +117,7 @@ function type1FontGlyphMapping(properties, builtInEncoding, glyphNames) {
     baseEncoding = builtInEncoding;
     for (charCode = 0; charCode < baseEncoding.length; charCode++) {
       glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-      if (glyphId >= 0) {
-        charCodeToGlyphId[charCode] = glyphId;
-      } else {
-        charCodeToGlyphId[charCode] = 0; // notdef
-      }
+      charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : /* notdef = */ 0;
     }
   } else if (properties.baseEncodingName) {
     // If a valid base encoding name was used, the mapping is initialized with
@@ -154,11 +125,7 @@ function type1FontGlyphMapping(properties, builtInEncoding, glyphNames) {
     baseEncoding = getEncoding(properties.baseEncodingName);
     for (charCode = 0; charCode < baseEncoding.length; charCode++) {
       glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-      if (glyphId >= 0) {
-        charCodeToGlyphId[charCode] = glyphId;
-      } else {
-        charCodeToGlyphId[charCode] = 0; // notdef
-      }
+      charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : /* notdef = */ 0;
     }
   } else if (isSymbolicFont) {
     // For a symbolic font the encoding should be the fonts built-in encoding.
@@ -171,11 +138,7 @@ function type1FontGlyphMapping(properties, builtInEncoding, glyphNames) {
     baseEncoding = StandardEncoding;
     for (charCode = 0; charCode < baseEncoding.length; charCode++) {
       glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-      if (glyphId >= 0) {
-        charCodeToGlyphId[charCode] = glyphId;
-      } else {
-        charCodeToGlyphId[charCode] = 0; // notdef
-      }
+      charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : /* notdef = */ 0;
     }
   }
 
@@ -196,23 +159,57 @@ function type1FontGlyphMapping(properties, builtInEncoding, glyphNames) {
           glyphId = glyphNames.indexOf(standardGlyphName);
         }
       }
-      if (glyphId >= 0) {
-        charCodeToGlyphId[charCode] = glyphId;
-      } else {
-        charCodeToGlyphId[charCode] = 0; // notdef
-      }
+      charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : /* notdef = */ 0;
     }
   }
   return charCodeToGlyphId;
 }
 
 function normalizeFontName(name) {
-  return name.replace(/[,_]/g, "-").replace(/\s/g, "");
+  return name.replaceAll(/[,_]/g, "-").replaceAll(/\s/g, "");
 }
+
+const getVerticalPresentationForm = getLookupTableFactory(t => {
+  // This table has been found at
+  // https://searchfox.org/mozilla-central/rev/cbdfa503a87597b20719aae5f6a1efccd6cb3b7b/gfx/thebes/gfxHarfBuzzShaper.cpp#251-294
+  t[0x2013] = 0xfe32; // EN DASH
+  t[0x2014] = 0xfe31; // EM DASH
+  t[0x2025] = 0xfe30; // TWO DOT LEADER
+  t[0x2026] = 0xfe19; // HORIZONTAL ELLIPSIS
+  t[0x3001] = 0xfe11; // IDEOGRAPHIC COMMA
+  t[0x3002] = 0xfe12; // IDEOGRAPHIC FULL STOP
+  t[0x3008] = 0xfe3f; // LEFT ANGLE BRACKET
+  t[0x3009] = 0xfe40; // RIGHT ANGLE BRACKET
+  t[0x300a] = 0xfe3d; // LEFT DOUBLE ANGLE BRACKET
+  t[0x300b] = 0xfe3e; // RIGHT DOUBLE ANGLE BRACKET
+  t[0x300c] = 0xfe41; // LEFT CORNER BRACKET
+  t[0x300d] = 0xfe42; // RIGHT CORNER BRACKET
+  t[0x300e] = 0xfe43; // LEFT WHITE CORNER BRACKET
+  t[0x300f] = 0xfe44; // RIGHT WHITE CORNER BRACKET
+  t[0x3010] = 0xfe3b; // LEFT BLACK LENTICULAR BRACKET
+  t[0x3011] = 0xfe3c; // RIGHT BLACK LENTICULAR BRACKET
+  t[0x3014] = 0xfe39; // LEFT TORTOISE SHELL BRACKET
+  t[0x3015] = 0xfe3a; // RIGHT TORTOISE SHELL BRACKET
+  t[0x3016] = 0xfe17; // LEFT WHITE LENTICULAR BRACKET
+  t[0x3017] = 0xfe18; // RIGHT WHITE LENTICULAR BRACKET
+  t[0xfe4f] = 0xfe34; // WAVY LOW LINE
+  t[0xff01] = 0xfe15; // FULLWIDTH EXCLAMATION MARK
+  t[0xff08] = 0xfe35; // FULLWIDTH LEFT PARENTHESIS
+  t[0xff09] = 0xfe36; // FULLWIDTH RIGHT PARENTHESIS
+  t[0xff0c] = 0xfe10; // FULLWIDTH COMMA
+  t[0xff1a] = 0xfe13; // FULLWIDTH COLON
+  t[0xff1b] = 0xfe14; // FULLWIDTH SEMICOLON
+  t[0xff1f] = 0xfe16; // FULLWIDTH QUESTION MARK
+  t[0xff3b] = 0xfe47; // FULLWIDTH LEFT SQUARE BRACKET
+  t[0xff3d] = 0xfe48; // FULLWIDTH RIGHT SQUARE BRACKET
+  t[0xff3f] = 0xfe33; // FULLWIDTH LOW LINE
+  t[0xff5b] = 0xfe37; // FULLWIDTH LEFT CURLY BRACKET
+  t[0xff5d] = 0xfe38; // FULLWIDTH RIGHT CURLY BRACKET
+});
 
 export {
   FontFlags,
-  getFontType,
+  getVerticalPresentationForm,
   MacStandardGlyphOrdering,
   normalizeFontName,
   recoverGlyphName,

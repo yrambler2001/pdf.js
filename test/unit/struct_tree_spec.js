@@ -19,6 +19,7 @@ import { getDocument } from "../../src/display/api.js";
 function equalTrees(rootA, rootB) {
   function walk(a, b) {
     expect(a.role).toEqual(b.role);
+    expect(a.lang).toEqual(b.lang);
     expect(a.type).toEqual(b.type);
     expect("children" in a).toEqual("children" in b);
     if (!a.children) {
@@ -47,6 +48,7 @@ describe("struct tree", function () {
           children: [
             {
               role: "Document",
+              lang: "en-US",
               children: [
                 {
                   role: "H1",
@@ -104,5 +106,49 @@ describe("struct tree", function () {
       );
       await loadingTask.destroy();
     });
+  });
+
+  it("parses structure with a figure and its bounding box", async function () {
+    const filename = "bug1708040.pdf";
+    const params = buildGetDocumentParams(filename);
+    const loadingTask = getDocument(params);
+    const doc = await loadingTask.promise;
+    const page = await doc.getPage(1);
+    const struct = await page.getStructTree();
+    equalTrees(
+      {
+        children: [
+          {
+            role: "Document",
+            children: [
+              {
+                role: "Sect",
+                children: [
+                  {
+                    role: "P",
+                    children: [{ type: "content", id: "p21R_mc0" }],
+                    lang: "EN-US",
+                  },
+                  {
+                    role: "P",
+                    children: [{ type: "content", id: "p21R_mc1" }],
+                    lang: "EN-US",
+                  },
+                  {
+                    role: "Figure",
+                    children: [{ type: "content", id: "p21R_mc2" }],
+                    alt: "A logo of a fox and a globe\u0000",
+                    bbox: [72, 287.782, 456, 695.032],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        role: "Root",
+      },
+      struct
+    );
+    await loadingTask.destroy();
   });
 });

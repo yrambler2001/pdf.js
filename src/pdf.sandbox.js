@@ -55,12 +55,12 @@ class Sandbox {
   }
 
   create(data) {
-    if (PDFJSDev.test("!PRODUCTION || TESTING")) {
+    if (PDFJSDev.test("TESTING")) {
       this._module.ccall("nukeSandbox", null, []);
     }
     const code = [PDFJSDev.eval("PDF_SCRIPTING_JS_SOURCE")];
 
-    if (PDFJSDev.test("!PRODUCTION || TESTING")) {
+    if (PDFJSDev.test("TESTING")) {
       code.push(
         `globalThis.sendResultForTesting = callExternalFunction.bind(null, "send");`
       );
@@ -84,6 +84,7 @@ class Sandbox {
         [buf, this._alertOnError]
       );
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error(error);
     } finally {
       if (buf) {
@@ -103,13 +104,11 @@ class Sandbox {
   }
 
   dispatchEvent(event) {
-    this.support.callSandboxFunction("dispatchEvent", event);
+    this.support?.callSandboxFunction("dispatchEvent", event);
   }
 
   dumpMemoryUse() {
-    if (this._module) {
-      this._module.ccall("dumpMemoryUse", null, []);
-    }
+    this._module?.ccall("dumpMemoryUse", null, []);
   }
 
   nukeSandbox() {
@@ -122,7 +121,7 @@ class Sandbox {
   }
 
   evalForTesting(code, key) {
-    if (PDFJSDev.test("!PRODUCTION || TESTING")) {
+    if (PDFJSDev.test("TESTING")) {
       this._module.ccall(
         "evalInSandbox",
         null,
@@ -143,9 +142,7 @@ class Sandbox {
 }
 
 function QuickJSSandbox() {
-  return ModuleLoader().then(module => {
-    return new Sandbox(window, module);
-  });
+  return ModuleLoader().then(module => new Sandbox(window, module));
 }
 
 export { QuickJSSandbox };

@@ -1,6 +1,7 @@
 ---
 title: Examples
-template: layout.jade
+layout: layout.njk
+slug: examples
 ---
 
 ## Hello World Walkthrough
@@ -44,14 +45,24 @@ Each PDF page has its own viewport which defines the size in pixels(72DPI) and i
 ```js
 var scale = 1.5;
 var viewport = page.getViewport({ scale: scale, });
+// Support HiDPI-screens.
+var outputScale = window.devicePixelRatio || 1;
 
 var canvas = document.getElementById('the-canvas');
 var context = canvas.getContext('2d');
-canvas.height = viewport.height;
-canvas.width = viewport.width;
+
+canvas.width = Math.floor(viewport.width * outputScale);
+canvas.height = Math.floor(viewport.height * outputScale);
+canvas.style.width = Math.floor(viewport.width) + "px";
+canvas.style.height =  Math.floor(viewport.height) + "px";
+
+var transform = outputScale !== 1
+  ? [outputScale, 0, 0, outputScale, 0, 0]
+  : null;
 
 var renderContext = {
   canvasContext: context,
+  transform: transform,
   viewport: viewport
 };
 page.render(renderContext);
@@ -71,19 +82,19 @@ var scaledViewport = page.getViewport({ scale: scale, });
 ### Hello World with document load error handling
 
 The example demonstrates how promises can be used to handle errors during loading.
-It also demonstrates how to wait until page loaded and rendered.
+It also demonstrates how to wait until a page is loaded and rendered.
 
-<script async src="//jsfiddle.net/pdfjs/9engc9mw/embed/js,html,css,result/"></script>
+<script async src="https://jsfiddle.net/pdfjs/9engc9mw/embed/html,css,result/"></script>
 
 ### Hello World using base64 encoded PDF
 
 The PDF.js can accept any decoded base64 data as an array.
 
-<script async src="//jsfiddle.net/pdfjs/cq0asLqz/embed/js,html,css,result/"></script>
+<script async src="https://jsfiddle.net/pdfjs/cq0asLqz/embed/html,css,result/"></script>
 
 ### Previous/Next example
 
 The same canvas cannot be used to perform to draw two pages at the same time --
 the example demonstrates how to wait on previous operation to be complete.
 
-<script async src="//jsfiddle.net/pdfjs/wagvs9Lf/embed/js,html,css,result/"></script>
+<script async src="https://jsfiddle.net/pdfjs/wagvs9Lf/embed/html,css,result/"></script>

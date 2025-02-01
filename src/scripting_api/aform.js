@@ -52,17 +52,20 @@ class AForm {
     return event.target ? `[ ${event.target.name} ]` : "";
   }
 
-  _parseDate(cFormat, cDate) {
-    const ddate = Date.parse(cDate);
-    if (isNaN(ddate)) {
-      try {
-        return this._util.scand(cFormat, cDate);
-      } catch (error) {
-        return null;
-      }
-    } else {
-      return new Date(ddate);
+  _parseDate(cFormat, cDate, strict = false) {
+    let date = null;
+    try {
+      date = this._util._scand(cFormat, cDate, strict);
+    } catch {}
+    if (date) {
+      return date;
     }
+    if (strict) {
+      return null;
+    }
+
+    date = Date.parse(cDate);
+    return isNaN(date) ? null : new Date(date);
   }
 
   AFMergeChange(event = globalThis.event) {
@@ -90,7 +93,7 @@ class AForm {
       str = `0${str}`;
     }
 
-    const numbers = str.match(/([0-9]+)/g);
+    const numbers = str.match(/(\d+)/g);
     if (numbers.length === 0) {
       return null;
     }
@@ -131,10 +134,6 @@ class AForm {
     bCurrencyPrepend
   ) {
     const event = globalThis.event;
-    if (!event.value) {
-      return;
-    }
-
     let value = this.AFMakeNumber(event.value);
     if (value === null) {
       event.value = "";
@@ -202,13 +201,13 @@ class AForm {
     if (sepStyle > 1) {
       // comma sep
       pattern = event.willCommit
-        ? /^[+-]?([0-9]+(,[0-9]*)?|,[0-9]+)$/
-        : /^[+-]?[0-9]*,?[0-9]*$/;
+        ? /^[+-]?(\d+(,\d*)?|,\d+)$/
+        : /^[+-]?\d*,?\d*$/;
     } else {
       // dot sep
       pattern = event.willCommit
-        ? /^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)$/
-        : /^[+-]?[0-9]*\.?[0-9]*$/;
+        ? /^[+-]?(\d+(\.\d*)?|\.\d+)$/
+        : /^[+-]?\d*\.?\d*$/;
     }
 
     if (!pattern.test(value)) {
@@ -257,11 +256,7 @@ class AForm {
     const formatStr = `%,${sepStyle}.${nDec}f`;
     value = this._util.printf(formatStr, value * 100);
 
-    if (percentPrepend) {
-      event.value = `%${value}`;
-    } else {
-      event.value = `${value}%`;
-    }
+    event.value = percentPrepend ? `%${value}` : `${value}%`;
   }
 
   AFPercent_Keystroke(nDec, sepStyle) {
@@ -298,7 +293,7 @@ class AForm {
       return;
     }
 
-    if (this._parseDate(cFormat, value) === null) {
+    if (this._parseDate(cFormat, value, /* strict = */ true) === null) {
       const invalid = GlobalConstants.IDS_INVALID_DATE;
       const invalid2 = GlobalConstants.IDS_INVALID_DATE2;
       const err = `${invalid} ${this._mkTargetName(
@@ -409,16 +404,21 @@ class AForm {
 
     const event = globalThis.event;
     const values = [];
+
+    cFields = this.AFMakeArrayFromList(cFields);
     for (const cField of cFields) {
       const field = this._document.getField(cField);
-      const number = this.AFMakeNumber(field.value);
-      if (number !== null) {
-        values.push(number);
+      if (!field) {
+        continue;
+      }
+      for (const child of field.getArray()) {
+        const number = this.AFMakeNumber(child.value);
+        values.push(number ?? 0);
       }
     }
 
     if (values.length === 0) {
-      event.value = cFunction === "PRD" ? 1 : 0;
+      event.value = 0;
       return;
     }
 
@@ -433,11 +433,8 @@ class AForm {
     }
 
     psf = this.AFMakeNumber(psf);
-    if (psf === null) {
-      throw new Error("Invalid psf in AFSpecial_Format");
-    }
 
-    let formatStr = "";
+    let formatStr;
     switch (psf) {
       case 0:
         formatStr = "99999";
@@ -446,11 +443,10 @@ class AForm {
         formatStr = "99999-9999";
         break;
       case 2:
-        if (this._util.printx("9999999999", event.value).length >= 10) {
-          formatStr = "(999) 999-9999";
-        } else {
-          formatStr = "999-9999";
-        }
+        formatStr =
+          this._util.printx("9999999999", event.value).length >= 10
+            ? "(999) 999-9999"
+            : "999-9999";
         break;
       case 3:
         formatStr = "999-99-9999";
@@ -463,12 +459,32 @@ class AForm {
   }
 
   AFSpecial_KeystrokeEx(cMask) {
+    const event = globalThis.event;
+
+    // Simplify the format string by removing all characters that are not
+    // specific to the format because the user could enter 1234567 when the
+    // format is 999-9999.
+    const simplifiedFormatStr = cMask.replaceAll(/[^9AOX]/g, "");
+    this.#AFSpecial_KeystrokeEx_helper(simplifiedFormatStr, null, false);
+    if (event.rc) {
+      return;
+    }
+
+    event.rc = true;
+    this.#AFSpecial_KeystrokeEx_helper(cMask, null, true);
+  }
+
+  #AFSpecial_KeystrokeEx_helper(cMask, value, warn) {
     if (!cMask) {
       return;
     }
 
     const event = globalThis.event;
-    const value = this.AFMergeChange(event);
+    value ||= this.AFMergeChange(event);
+    if (!value) {
+      return;
+    }
+
     const checkers = new Map([
       ["9", char => char >= "0" && char <= "9"],
       [
@@ -486,7 +502,7 @@ class AForm {
     ]);
 
     function _checkValidity(_value, _cMask) {
-      for (let i = 0, ii = value.length; i < ii; i++) {
+      for (let i = 0, ii = _value.length; i < ii; i++) {
         const mask = _cMask.charAt(i);
         const char = _value.charAt(i);
         const checker = checkers.get(mask);
@@ -501,27 +517,29 @@ class AForm {
       return true;
     }
 
-    if (!value) {
-      return;
-    }
-
     const err = `${GlobalConstants.IDS_INVALID_VALUE} = "${cMask}"`;
 
     if (value.length > cMask.length) {
-      this._app.alert(err);
+      if (warn) {
+        this._app.alert(err);
+      }
       event.rc = false;
       return;
     }
 
     if (event.willCommit) {
       if (value.length < cMask.length) {
-        this._app.alert(err);
+        if (warn) {
+          this._app.alert(err);
+        }
         event.rc = false;
         return;
       }
 
       if (!_checkValidity(value, cMask)) {
-        this._app.alert(err);
+        if (warn) {
+          this._app.alert(err);
+        }
         event.rc = false;
         return;
       }
@@ -534,23 +552,19 @@ class AForm {
     }
 
     if (!_checkValidity(value, cMask)) {
-      this._app.alert(err);
+      if (warn) {
+        this._app.alert(err);
+      }
       event.rc = false;
     }
   }
 
   AFSpecial_Keystroke(psf) {
     const event = globalThis.event;
-    if (!event.value) {
-      return;
-    }
-
     psf = this.AFMakeNumber(psf);
-    if (psf === null) {
-      throw new Error("Invalid psf in AFSpecial_Keystroke");
-    }
 
-    let formatStr;
+    let value = this.AFMergeChange(event);
+    let formatStr, secondFormatStr;
     switch (psf) {
       case 0:
         formatStr = "99999";
@@ -559,16 +573,8 @@ class AForm {
         formatStr = "99999-9999";
         break;
       case 2:
-        const finalLen =
-          event.value.length +
-          event.change.length +
-          event.selStart -
-          event.selEnd;
-        if (finalLen >= 8) {
-          formatStr = "(999) 999-9999";
-        } else {
-          formatStr = "999-9999";
-        }
+        formatStr = "999-9999";
+        secondFormatStr = "(999) 999-9999";
         break;
       case 3:
         formatStr = "999-99-9999";
@@ -576,8 +582,36 @@ class AForm {
       default:
         throw new Error("Invalid psf in AFSpecial_Keystroke");
     }
+    const formats = secondFormatStr
+      ? [formatStr, secondFormatStr]
+      : [formatStr];
+    for (const format of formats) {
+      this.#AFSpecial_KeystrokeEx_helper(format, value, false);
+      if (event.rc) {
+        return;
+      }
+      event.rc = true;
+    }
 
-    this.AFSpecial_KeystrokeEx(formatStr);
+    const re = /([-()]|\s)+/g;
+    value = value.replaceAll(re, "");
+    for (const format of formats) {
+      this.#AFSpecial_KeystrokeEx_helper(
+        format.replaceAll(re, ""),
+        value,
+        false
+      );
+      if (event.rc) {
+        return;
+      }
+      event.rc = true;
+    }
+
+    this.AFSpecial_KeystrokeEx(
+      ((secondFormatStr && value.match(/\d/g)) || []).length > 7
+        ? secondFormatStr
+        : formatStr
+    );
   }
 
   AFTime_FormatEx(cFormat) {
@@ -602,6 +636,14 @@ class AForm {
 
   eMailValidate(str) {
     return this._emailRegex.test(str);
+  }
+
+  AFExactMatch(rePatterns, str) {
+    if (rePatterns instanceof RegExp) {
+      return str.match(rePatterns)?.[0] === str || 0;
+    }
+
+    return rePatterns.findIndex(re => str.match(re)?.[0] === str) + 1;
   }
 }
 

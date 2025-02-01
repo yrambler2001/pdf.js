@@ -20,7 +20,7 @@ import {
   $getTemplateRoot,
   $isSplittable,
   $isThereMoreWidth,
-} from "./xfa_object.js";
+} from "./symbol_utils.js";
 import { measureToString } from "./html_utils.js";
 
 // Subform and ExclGroup have a layout so they share these functions.
@@ -147,7 +147,10 @@ function addHTML(node, html, bbox) {
       break;
     }
     case "tb": {
-      extra.width = availableSpace.width;
+      // Even if the subform can possibly take all the available width,
+      // we must compute the final width as it is in order to be able
+      // for example to center the subform within its parent.
+      extra.width = Math.min(availableSpace.width, Math.max(extra.width, w));
       extra.height += h;
       extra.children.push(html);
       break;
@@ -270,7 +273,7 @@ function checkDimensions(node, space) {
 
   const ERROR = 2;
   const parent = node[$getSubformParent]();
-  const attempt = (parent[$extra] && parent[$extra].attempt) || 0;
+  const attempt = parent[$extra]?.attempt || 0;
 
   const [, y, w, h] = getTransformedBBox(node);
   switch (parent.layout) {

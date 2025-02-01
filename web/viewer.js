@@ -13,7 +13,9 @@
  * limitations under the License.
  */
 
+import { RenderingStates, ScrollMode, SpreadMode } from "./ui_utils.js";
 import { AppOptions } from "./app_options.js";
+import { LinkTarget } from "./pdf_link_service.js";
 import { PDFViewerApplication } from "./app.js";
 
 /* eslint-disable-next-line no-unused-vars */
@@ -23,111 +25,93 @@ const pdfjsVersion =
 const pdfjsBuild =
   typeof PDFJSDev !== "undefined" ? PDFJSDev.eval("BUNDLE_BUILD") : void 0;
 
+const AppConstants =
+  typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")
+    ? { LinkTarget, RenderingStates, ScrollMode, SpreadMode }
+    : null;
+
 window.PDFViewerApplication = PDFViewerApplication;
+window.PDFViewerApplicationConstants = AppConstants;
 window.PDFViewerApplicationOptions = AppOptions;
 
-if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("CHROME")) {
-  var defaultUrl; // eslint-disable-line no-var
-
-  (function rewriteUrlClosure() {
-    // Run this code outside DOMContentLoaded to make sure that the URL
-    // is rewritten as soon as possible.
-    const queryString = document.location.search.slice(1);
-    const m = /(^|&)file=([^&]*)/.exec(queryString);
-    defaultUrl = m ? decodeURIComponent(m[2]) : "";
-
-    // Example: chrome-extension://.../http://example.com/file.pdf
-    const humanReadableUrl = "/" + defaultUrl + location.hash;
-    history.replaceState(history.state, "", humanReadableUrl);
-    if (top === window) {
-      // eslint-disable-next-line no-undef
-      chrome.runtime.sendMessage("showPageAction");
-    }
-  })();
-}
-
-if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-  require("./firefoxcom.js");
-  require("./firefox_print_service.js");
-}
-if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC")) {
-  require("./genericcom.js");
-}
-if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("CHROME")) {
-  require("./chromecom.js");
-}
-if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("CHROME || GENERIC")) {
-  require("./pdf_print_service.js");
-}
-
 function getViewerConfiguration() {
-  let errorWrapper = null;
-  if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
-    errorWrapper = {
-      container: document.getElementById("errorWrapper"),
-      errorMessage: document.getElementById("errorMessage"),
-      closeButton: document.getElementById("errorClose"),
-      errorMoreInfo: document.getElementById("errorMoreInfo"),
-      moreInfoButton: document.getElementById("errorShowMore"),
-      lessInfoButton: document.getElementById("errorShowLess"),
-    };
-  }
-
   return {
     appContainer: document.body,
+    principalContainer: document.getElementById("mainContainer"),
     mainContainer: document.getElementById("viewerContainer"),
     viewerContainer: document.getElementById("viewer"),
-    eventBus: null,
     toolbar: {
-      container: document.getElementById("toolbarViewer"),
+      container: document.getElementById("toolbarContainer"),
       numPages: document.getElementById("numPages"),
       pageNumber: document.getElementById("pageNumber"),
-      scaleSelectContainer: document.getElementById("scaleSelectContainer"),
       scaleSelect: document.getElementById("scaleSelect"),
       customScaleOption: document.getElementById("customScaleOption"),
       previous: document.getElementById("previous"),
       next: document.getElementById("next"),
-      zoomIn: document.getElementById("zoomIn"),
-      zoomOut: document.getElementById("zoomOut"),
-      viewFind: document.getElementById("viewFind"),
-      openFile: document.getElementById("openFile"),
-      print: document.getElementById("print"),
-      presentationModeButton: document.getElementById("presentationMode"),
-      download: document.getElementById("download"),
-      viewBookmark: document.getElementById("viewBookmark"),
+      zoomIn: document.getElementById("zoomInButton"),
+      zoomOut: document.getElementById("zoomOutButton"),
+      print: document.getElementById("printButton"),
+      editorFreeTextButton: document.getElementById("editorFreeTextButton"),
+      editorFreeTextParamsToolbar: document.getElementById(
+        "editorFreeTextParamsToolbar"
+      ),
+      editorHighlightButton: document.getElementById("editorHighlightButton"),
+      editorHighlightParamsToolbar: document.getElementById(
+        "editorHighlightParamsToolbar"
+      ),
+      editorHighlightColorPicker: document.getElementById(
+        "editorHighlightColorPicker"
+      ),
+      editorInkButton: document.getElementById("editorInkButton"),
+      editorInkParamsToolbar: document.getElementById("editorInkParamsToolbar"),
+      editorStampButton: document.getElementById("editorStampButton"),
+      editorStampParamsToolbar: document.getElementById(
+        "editorStampParamsToolbar"
+      ),
+      editorSignatureButton: document.getElementById("editorSignatureButton"),
+      editorSignatureParamsToolbar: document.getElementById(
+        "editorSignatureParamsToolbar"
+      ),
+      download: document.getElementById("downloadButton"),
     },
     secondaryToolbar: {
       toolbar: document.getElementById("secondaryToolbar"),
-      toggleButton: document.getElementById("secondaryToolbarToggle"),
-      toolbarButtonContainer: document.getElementById(
-        "secondaryToolbarButtonContainer"
-      ),
-      presentationModeButton: document.getElementById(
-        "secondaryPresentationMode"
-      ),
-      openFileButton: document.getElementById("secondaryOpenFile"),
+      toggleButton: document.getElementById("secondaryToolbarToggleButton"),
+      presentationModeButton: document.getElementById("presentationMode"),
+      openFileButton:
+        typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")
+          ? document.getElementById("secondaryOpenFile")
+          : null,
       printButton: document.getElementById("secondaryPrint"),
       downloadButton: document.getElementById("secondaryDownload"),
-      viewBookmarkButton: document.getElementById("secondaryViewBookmark"),
+      viewBookmarkButton: document.getElementById("viewBookmark"),
       firstPageButton: document.getElementById("firstPage"),
       lastPageButton: document.getElementById("lastPage"),
       pageRotateCwButton: document.getElementById("pageRotateCw"),
       pageRotateCcwButton: document.getElementById("pageRotateCcw"),
       cursorSelectToolButton: document.getElementById("cursorSelectTool"),
       cursorHandToolButton: document.getElementById("cursorHandTool"),
+      scrollPageButton: document.getElementById("scrollPage"),
       scrollVerticalButton: document.getElementById("scrollVertical"),
       scrollHorizontalButton: document.getElementById("scrollHorizontal"),
       scrollWrappedButton: document.getElementById("scrollWrapped"),
       spreadNoneButton: document.getElementById("spreadNone"),
       spreadOddButton: document.getElementById("spreadOdd"),
       spreadEvenButton: document.getElementById("spreadEven"),
+      imageAltTextSettingsButton: document.getElementById(
+        "imageAltTextSettings"
+      ),
+      imageAltTextSettingsSeparator: document.getElementById(
+        "imageAltTextSettingsSeparator"
+      ),
       documentPropertiesButton: document.getElementById("documentProperties"),
     },
     sidebar: {
       // Divs (and sidebar button)
       outerContainer: document.getElementById("outerContainer"),
-      viewerContainer: document.getElementById("viewerContainer"),
-      toggleButton: document.getElementById("sidebarToggle"),
+      sidebarContainer: document.getElementById("sidebarContainer"),
+      toggleButton: document.getElementById("sidebarToggleButton"),
+      resizer: document.getElementById("sidebarResizer"),
       // Buttons
       thumbnailButton: document.getElementById("viewThumbnail"),
       outlineButton: document.getElementById("viewOutline"),
@@ -139,38 +123,30 @@ function getViewerConfiguration() {
       attachmentsView: document.getElementById("attachmentsView"),
       layersView: document.getElementById("layersView"),
       // View-specific options
-      outlineOptionsContainer: document.getElementById(
-        "outlineOptionsContainer"
-      ),
       currentOutlineItemButton: document.getElementById("currentOutlineItem"),
-    },
-    sidebarResizer: {
-      outerContainer: document.getElementById("outerContainer"),
-      resizer: document.getElementById("sidebarResizer"),
     },
     findBar: {
       bar: document.getElementById("findbar"),
-      toggleButton: document.getElementById("viewFind"),
+      toggleButton: document.getElementById("viewFindButton"),
       findField: document.getElementById("findInput"),
       highlightAllCheckbox: document.getElementById("findHighlightAll"),
       caseSensitiveCheckbox: document.getElementById("findMatchCase"),
+      matchDiacriticsCheckbox: document.getElementById("findMatchDiacritics"),
       entireWordCheckbox: document.getElementById("findEntireWord"),
       findMsg: document.getElementById("findMsg"),
       findResultsCount: document.getElementById("findResultsCount"),
-      findPreviousButton: document.getElementById("findPrevious"),
-      findNextButton: document.getElementById("findNext"),
+      findPreviousButton: document.getElementById("findPreviousButton"),
+      findNextButton: document.getElementById("findNextButton"),
     },
     passwordOverlay: {
-      overlayName: "passwordOverlay",
-      container: document.getElementById("passwordOverlay"),
+      dialog: document.getElementById("passwordDialog"),
       label: document.getElementById("passwordText"),
       input: document.getElementById("password"),
       submitButton: document.getElementById("passwordSubmit"),
       cancelButton: document.getElementById("passwordCancel"),
     },
     documentProperties: {
-      overlayName: "documentPropertiesOverlay",
-      container: document.getElementById("documentPropertiesOverlay"),
+      dialog: document.getElementById("documentPropertiesDialog"),
       closeButton: document.getElementById("documentPropertiesClose"),
       fields: {
         fileName: document.getElementById("fileNameField"),
@@ -189,57 +165,112 @@ function getViewerConfiguration() {
         linearized: document.getElementById("linearizedField"),
       },
     },
-    errorWrapper,
+    altTextDialog: {
+      dialog: document.getElementById("altTextDialog"),
+      optionDescription: document.getElementById("descriptionButton"),
+      optionDecorative: document.getElementById("decorativeButton"),
+      textarea: document.getElementById("descriptionTextarea"),
+      cancelButton: document.getElementById("altTextCancel"),
+      saveButton: document.getElementById("altTextSave"),
+    },
+    newAltTextDialog: {
+      dialog: document.getElementById("newAltTextDialog"),
+      title: document.getElementById("newAltTextTitle"),
+      descriptionContainer: document.getElementById(
+        "newAltTextDescriptionContainer"
+      ),
+      textarea: document.getElementById("newAltTextDescriptionTextarea"),
+      disclaimer: document.getElementById("newAltTextDisclaimer"),
+      learnMore: document.getElementById("newAltTextLearnMore"),
+      imagePreview: document.getElementById("newAltTextImagePreview"),
+      createAutomatically: document.getElementById(
+        "newAltTextCreateAutomatically"
+      ),
+      createAutomaticallyButton: document.getElementById(
+        "newAltTextCreateAutomaticallyButton"
+      ),
+      downloadModel: document.getElementById("newAltTextDownloadModel"),
+      downloadModelDescription: document.getElementById(
+        "newAltTextDownloadModelDescription"
+      ),
+      error: document.getElementById("newAltTextError"),
+      errorCloseButton: document.getElementById("newAltTextCloseButton"),
+      cancelButton: document.getElementById("newAltTextCancel"),
+      notNowButton: document.getElementById("newAltTextNotNow"),
+      saveButton: document.getElementById("newAltTextSave"),
+    },
+    altTextSettingsDialog: {
+      dialog: document.getElementById("altTextSettingsDialog"),
+      createModelButton: document.getElementById("createModelButton"),
+      aiModelSettings: document.getElementById("aiModelSettings"),
+      learnMore: document.getElementById("altTextSettingsLearnMore"),
+      deleteModelButton: document.getElementById("deleteModelButton"),
+      downloadModelButton: document.getElementById("downloadModelButton"),
+      showAltTextDialogButton: document.getElementById(
+        "showAltTextDialogButton"
+      ),
+      altTextSettingsCloseButton: document.getElementById(
+        "altTextSettingsCloseButton"
+      ),
+      closeButton: document.getElementById("altTextSettingsCloseButton"),
+    },
+    annotationEditorParams: {
+      editorFreeTextFontSize: document.getElementById("editorFreeTextFontSize"),
+      editorFreeTextColor: document.getElementById("editorFreeTextColor"),
+      editorInkColor: document.getElementById("editorInkColor"),
+      editorInkThickness: document.getElementById("editorInkThickness"),
+      editorInkOpacity: document.getElementById("editorInkOpacity"),
+      editorStampAddImage: document.getElementById("editorStampAddImage"),
+      editorSignatureAddSignature: document.getElementById(
+        "editorSignatureAddSignature"
+      ),
+      editorFreeHighlightThickness: document.getElementById(
+        "editorFreeHighlightThickness"
+      ),
+      editorHighlightShowAll: document.getElementById("editorHighlightShowAll"),
+    },
     printContainer: document.getElementById("printContainer"),
-    openFileInputName: "fileInput",
-    debuggerScriptPath: "./debugger.js",
+    editorUndoBar: {
+      container: document.getElementById("editorUndoBar"),
+      message: document.getElementById("editorUndoBarMessage"),
+      undoButton: document.getElementById("editorUndoBarUndoButton"),
+      closeButton: document.getElementById("editorUndoBarCloseButton"),
+    },
   };
 }
 
 function webViewerLoad() {
   const config = getViewerConfiguration();
-  if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")) {
-    Promise.all([
-      import("pdfjs-web/genericcom.js"),
-      import("pdfjs-web/pdf_print_service.js"),
-    ]).then(function ([genericCom, pdfPrintService]) {
-      PDFViewerApplication.run(config);
-    });
-  } else {
-    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("CHROME")) {
-      AppOptions.set("defaultUrl", defaultUrl);
-    }
 
-    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC")) {
-      // Give custom implementations of the default viewer a simpler way to
-      // set various `AppOptions`, by dispatching an event once all viewer
-      // files are loaded but *before* the viewer initialization has run.
-      const event = document.createEvent("CustomEvent");
-      event.initCustomEvent("webviewerloaded", true, true, {
+  if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC")) {
+    // Give custom implementations of the default viewer a simpler way to
+    // set various `AppOptions`, by dispatching an event once all viewer
+    // files are loaded but *before* the viewer initialization has run.
+    const event = new CustomEvent("webviewerloaded", {
+      bubbles: true,
+      cancelable: true,
+      detail: {
         source: window,
-      });
-      try {
-        // Attempt to dispatch the event at the embedding `document`,
-        // in order to support cases where the viewer is embedded in
-        // a *dynamically* created <iframe> element.
-        parent.document.dispatchEvent(event);
-      } catch (ex) {
-        // The viewer could be in e.g. a cross-origin <iframe> element,
-        // fallback to dispatching the event at the current `document`.
-        console.error(`webviewerloaded: ${ex}`);
-        document.dispatchEvent(event);
-      }
+      },
+    });
+    try {
+      // Attempt to dispatch the event at the embedding `document`,
+      // in order to support cases where the viewer is embedded in
+      // a *dynamically* created <iframe> element.
+      parent.document.dispatchEvent(event);
+    } catch (ex) {
+      // The viewer could be in e.g. a cross-origin <iframe> element,
+      // fallback to dispatching the event at the current `document`.
+      console.error("webviewerloaded:", ex);
+      document.dispatchEvent(event);
     }
-
-    PDFViewerApplication.run(config);
   }
+  PDFViewerApplication.run(config);
 }
 
 // Block the "load" event until all pages are loaded, to ensure that printing
 // works in Firefox; see https://bugzilla.mozilla.org/show_bug.cgi?id=1618553
-if (document.blockUnblockOnload) {
-  document.blockUnblockOnload(true);
-}
+document.blockUnblockOnload?.(true);
 
 if (
   document.readyState === "interactive" ||
@@ -250,4 +281,8 @@ if (
   document.addEventListener("DOMContentLoaded", webViewerLoad, true);
 }
 
-export { PDFViewerApplication, AppOptions as PDFViewerApplicationOptions };
+export {
+  PDFViewerApplication,
+  AppConstants as PDFViewerApplicationConstants,
+  AppOptions as PDFViewerApplicationOptions,
+};

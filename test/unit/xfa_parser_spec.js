@@ -19,7 +19,7 @@ import {
   $getChildrenByClass,
   $getChildrenByName,
   $text,
-} from "../../src/core/xfa/xfa_object.js";
+} from "../../src/core/xfa/symbol_utils.js";
 import { Binder } from "../../src/core/xfa/bind.js";
 import { searchNode } from "../../src/core/xfa/som.js";
 import { XFAParser } from "../../src/core/xfa/parser.js";
@@ -46,7 +46,7 @@ describe("XFAParser", function () {
           forbidden
         </dynamicRender>
       </acrobat7>
-      <autoSave>enabled</autoSave>      
+      <autoSave>enabled</autoSave>
       <submitUrl>
                  http://d.e.f
       </submitUrl>
@@ -414,7 +414,7 @@ describe("XFAParser", function () {
         [
           " The first line of this paragraph is indented a half-inch.\n",
           " Successive lines are not indented.\n",
-          " This is the last line of the paragraph.\n \n",
+          " This is the last line of the paragraph.\n ",
         ].join("")
       );
     });
@@ -1021,7 +1021,7 @@ describe("XFAParser", function () {
       ).toBe("SW1");
     });
 
-    it("should make basic binding with extra subform", function () {
+    it("should make basic binding with extra subform (consumeData)", function () {
       const xml = `
 <?xml version="1.0"?>
 <xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
@@ -1245,6 +1245,57 @@ describe("XFAParser", function () {
       `;
       const root = new XFAParser().parse(xml);
       const form = new Binder(root).bind();
+      expect(
+        searchNode(form, form, "subform.CardName.items[*].text[*]").map(x =>
+          x[$text]()
+        )
+      ).toEqual([
+        "Visa",
+        "Mastercard",
+        "American Express",
+        "VISA",
+        "MC",
+        "AMEX",
+      ]);
+    });
+
+    it("should make binding and bind items with a ref", function () {
+      const xml = `
+<?xml version="1.0"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+  <template xmlns="http://www.xfa.org/schema/xfa-template/3.3">
+    <subform name="main">
+      <field name="CardName">
+        <bind match="dataRef" ref="$data.main.value"/>
+        <bindItems ref="$data.main.ccs.cc[*]" labelRef="uiname" valueRef="token"/>
+        <ui>
+          <choiceList/>
+        </ui>
+      </field>
+    </subform>
+  </template>
+  <xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <xfa:data>
+      <main>
+        <value>VISA</value>
+        <ccs>
+          <cc uiname="Visa" token="VISA"/>
+          <cc uiname="Mastercard" token="MC"/>
+          <cc uiname="American Express" token="AMEX"/>
+        </ccs>
+        <CardName>MC</CardName>
+      </main>
+    </xfa:data>
+  </xfa:datasets>
+</xdp:xdp>
+      `;
+      const root = new XFAParser().parse(xml);
+      const form = new Binder(root).bind();
+      expect(
+        searchNode(form, form, "subform.CardName.value.text").map(x =>
+          x[$text]()
+        )
+      ).toEqual(["VISA"]);
       expect(
         searchNode(form, form, "subform.CardName.items[*].text[*]").map(x =>
           x[$text]()

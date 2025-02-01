@@ -14,13 +14,20 @@
  */
 
 import { BaseException, shadow } from "../shared/util.js";
-import { log2, readInt8, readUint16, readUint32 } from "./core_utils.js";
+import {
+  log2,
+  MAX_INT_32,
+  MIN_INT_32,
+  readInt8,
+  readUint16,
+  readUint32,
+} from "./core_utils.js";
 import { ArithmeticDecoder } from "./arithmetic_decoder.js";
 import { CCITTFaxDecoder } from "./ccitt.js";
 
 class Jbig2Error extends BaseException {
   constructor(msg) {
-    super(`JBIG2 error: ${msg}`, "Jbig2Error");
+    super(msg, "Jbig2Error");
   }
 }
 
@@ -83,10 +90,15 @@ function decodeInteger(contextCache, procedure, decoder) {
                   readBits(4) + 4) :
                 readBits(2);
   /* eslint-enable no-nested-ternary */
+  let signedValue;
   if (sign === 0) {
-    return value;
+    signedValue = value;
   } else if (value > 0) {
-    return -value;
+    signedValue = -value;
+  }
+  // Ensure that the integer value doesn't underflow or overflow.
+  if (signedValue >= MIN_INT_32 && signedValue <= MAX_INT_32) {
+    return signedValue;
   }
   return null;
 }
@@ -857,6 +869,20 @@ function decodeTextRegion(
           decodingContext
         );
       }
+
+      let increment = 0;
+      if (!transposed) {
+        if (referenceCorner > 1) {
+          currentS += symbolWidth - 1;
+        } else {
+          increment = symbolWidth - 1;
+        }
+      } else if (!(referenceCorner & 1)) {
+        currentS += symbolHeight - 1;
+      } else {
+        increment = symbolHeight - 1;
+      }
+
       const offsetT = t - (referenceCorner & 1 ? 0 : symbolHeight - 1);
       const offsetS = currentS - (referenceCorner & 2 ? symbolWidth - 1 : 0);
       let s2, t2, symbolRow;
@@ -888,7 +914,6 @@ function decodeTextRegion(
               );
           }
         }
-        currentS += symbolHeight - 1;
       } else {
         for (t2 = 0; t2 < symbolHeight; t2++) {
           row = bitmap[offsetT + t2];
@@ -913,7 +938,6 @@ function decodeTextRegion(
               );
           }
         }
-        currentS += symbolWidth - 1;
       }
       i++;
       const deltaS = huffman
@@ -922,7 +946,7 @@ function decodeTextRegion(
       if (deltaS === null) {
         break; // OOB
       }
-      currentS += deltaS + dsOffset;
+      currentS += increment + deltaS + dsOffset;
     } while (true);
   }
   return bitmap;
@@ -1473,12 +1497,12 @@ function processSegment(segment, visitor) {
       break;
     default:
       throw new Jbig2Error(
-        `segment type ${header.typeName}(${header.type})` +
-          " is not implemented"
+        `segment type ${header.typeName}(${header.type}) is not implemented`
       );
   }
   const callbackName = "on" + header.typeName;
   if (callbackName in visitor) {
+    // eslint-disable-next-line prefer-spread
     visitor[callbackName].apply(visitor, args);
   }
 }
@@ -1500,6 +1524,9 @@ function parseJbig2Chunks(chunks) {
 }
 
 function parseJbig2(data) {
+  if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("IMAGE_DECODERS")) {
+    throw new Error("Not implemented: parseJbig2");
+  }
   const end = data.length;
   let position = 0;
 
@@ -1558,9 +1585,7 @@ class SimpleSegmentVisitor {
     // The contents of ArrayBuffers are initialized to 0.
     // Fill the buffer with 0xFF only if info.defaultPixelValue is set
     if (info.defaultPixelValue) {
-      for (let i = 0, ii = buffer.length; i < ii; i++) {
-        buffer[i] = 0xff;
-      }
+      buffer.fill(0xff);
     }
     this.buffer = buffer;
   }
@@ -1636,7 +1661,7 @@ class SimpleSegmentVisitor {
   }
 
   onImmediateLosslessGenericRegion() {
-    this.onImmediateGenericRegion.apply(this, arguments);
+    this.onImmediateGenericRegion(...arguments);
   }
 
   onSymbolDictionary(
@@ -1663,13 +1688,13 @@ class SimpleSegmentVisitor {
       this.symbols = symbols = {};
     }
 
-    let inputSymbols = [];
-    for (let i = 0, ii = referredSegments.length; i < ii; i++) {
-      const referredSymbols = symbols[referredSegments[i]];
+    const inputSymbols = [];
+    for (const referredSegment of referredSegments) {
+      const referredSymbols = symbols[referredSegment];
       // referredSymbols is undefined when we have a reference to a Tables
       // segment instead of a SymbolDictionary.
       if (referredSymbols) {
-        inputSymbols = inputSymbols.concat(referredSymbols);
+        inputSymbols.push(...referredSymbols);
       }
     }
 
@@ -1696,13 +1721,13 @@ class SimpleSegmentVisitor {
 
     // Combines exported symbols from all referred segments
     const symbols = this.symbols;
-    let inputSymbols = [];
-    for (let i = 0, ii = referredSegments.length; i < ii; i++) {
-      const referredSymbols = symbols[referredSegments[i]];
+    const inputSymbols = [];
+    for (const referredSegment of referredSegments) {
+      const referredSymbols = symbols[referredSegment];
       // referredSymbols is undefined when we have a reference to a Tables
       // segment instead of a SymbolDictionary.
       if (referredSymbols) {
-        inputSymbols = inputSymbols.concat(referredSymbols);
+        inputSymbols.push(...referredSymbols);
       }
     }
     const symbolCodeLength = log2(inputSymbols.length);
@@ -1743,7 +1768,7 @@ class SimpleSegmentVisitor {
   }
 
   onImmediateLosslessTextRegion() {
-    this.onImmediateTextRegion.apply(this, arguments);
+    this.onImmediateTextRegion(...arguments);
   }
 
   onPatternDictionary(dictionary, currentSegment, data, start, end) {
@@ -1788,7 +1813,7 @@ class SimpleSegmentVisitor {
   }
 
   onImmediateLosslessHalftoneRegion() {
-    this.onImmediateHalftoneRegion.apply(this, arguments);
+    this.onImmediateHalftoneRegion(...arguments);
   }
 
   onTables(currentSegment, data, start, end) {
@@ -2562,6 +2587,9 @@ class Jbig2Image {
   }
 
   parse(data) {
+    if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("IMAGE_DECODERS")) {
+      throw new Error("Not implemented: Jbig2Image.parse");
+    }
     const { imgData, width, height } = parseJbig2(data);
     this.width = width;
     this.height = height;
@@ -2569,4 +2597,4 @@ class Jbig2Image {
   }
 }
 
-export { Jbig2Image };
+export { Jbig2Error, Jbig2Image };

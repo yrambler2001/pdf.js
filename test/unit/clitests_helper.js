@@ -13,10 +13,11 @@
  * limitations under the License.
  */
 
-import { setVerbosityLevel, VerbosityLevel } from "../../src/shared/util.js";
-import { isNodeJS } from "../../src/shared/is_node.js";
-import { PDFNodeStream } from "../../src/display/node_stream.js";
-import { setPDFNetworkStreamFactory } from "../../src/display/api.js";
+import {
+  isNodeJS,
+  setVerbosityLevel,
+  VerbosityLevel,
+} from "../../src/shared/util.js";
 
 // Sets longer timeout, similar to `jasmine-boot.js`.
 jasmine.DEFAULT_TIMEOUT_INTERVAL = 30000;
@@ -31,8 +32,3 @@ if (!isNodeJS) {
 // Reduce the amount of console "spam", by ignoring `info`/`warn` calls,
 // when running the unit-tests in Node.js/Travis.
 setVerbosityLevel(VerbosityLevel.ERRORS);
-
-// Set the network stream factory for the unit-tests.
-setPDFNetworkStreamFactory(function (params) {
-  return new PDFNodeStream(params);
-});

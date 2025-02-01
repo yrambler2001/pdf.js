@@ -1,6 +1,9 @@
-"use strict";
+/* eslint-disable import/no-commonjs */
 
-const fs = require("fs");
+import { createRequire } from "module";
+import fs from "fs";
+
+const require = createRequire(import.meta.url);
 const ttest = require("ttest");
 
 const VALID_GROUP_BYS = ["browser", "pdf", "page", "round", "stat"];
@@ -30,17 +33,13 @@ function parseOptions() {
 
 function group(stats, groupBy) {
   const vals = [];
-  for (let i = 0; i < stats.length; i++) {
-    const curStat = stats[i];
+  for (const curStat of stats) {
     const keyArr = [];
-    for (let j = 0; j < groupBy.length; j++) {
-      keyArr.push(curStat[groupBy[j]]);
+    for (const entry of groupBy) {
+      keyArr.push(curStat[entry]);
     }
     const key = keyArr.join(",");
-    if (vals[key] === undefined) {
-      vals[key] = [];
-    }
-    vals[key].push(curStat.time);
+    (vals[key] ||= []).push(curStat.time);
   }
   return vals;
 }
@@ -134,8 +133,7 @@ function stat(baseline, current) {
     return s.length;
   });
   rows.push(labels);
-  for (let k = 0; k < keys.length; k++) {
-    const key = keys[k];
+  for (const key of keys) {
     const baselineMean = mean(baselineGroup[key]);
     const currentMean = mean(currentGroup[key]);
     const row = key.split(",");
@@ -172,8 +170,7 @@ function stat(baseline, current) {
   // print output
   console.log("-- Grouped By " + options.groupBy.join(", ") + " --");
   const groupCount = options.groupBy.length;
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r];
+  for (const row of rows) {
     for (let i = 0; i < row.length; i++) {
       row[i] = pad(row[i], width[i], i < groupCount ? "right" : "left");
     }
