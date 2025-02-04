@@ -224,12 +224,9 @@ function getXfaFontWidths(name) {
   }
 
   const { baseWidths, baseMapping, factors } = info;
-  let rescaledBaseWidths;
-  if (!factors) {
-    rescaledBaseWidths = baseWidths;
-  } else {
-    rescaledBaseWidths = baseWidths.map((w, i) => w * factors[i]);
-  }
+  const rescaledBaseWidths = !factors
+    ? baseWidths
+    : baseWidths.map((w, i) => w * factors[i]);
 
   let currentCode = -2;
   let currentArray;
@@ -284,10 +281,7 @@ function getXfaFontDict(name) {
   dict.set("CIDToGIDMap", Name.get("Identity"));
   dict.set("W", widths);
   dict.set("FirstChar", widths[0]);
-  dict.set(
-    "LastChar",
-    widths[widths.length - 2] + widths[widths.length - 1].length - 1
-  );
+  dict.set("LastChar", widths.at(-2) + widths.at(-1).length - 1);
   const descriptor = new Dict(null);
   dict.set("FontDescriptor", descriptor);
   const systemInfo = new Dict(null);

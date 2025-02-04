@@ -17,7 +17,10 @@ import { bytesToString, shadow, unreachable } from "../shared/util.js";
 
 class BaseStream {
   constructor() {
-    if (this.constructor === BaseStream) {
+    if (
+      (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) &&
+      this.constructor === BaseStream
+    ) {
       unreachable("Cannot initialize BaseStream.");
     }
   }
@@ -40,8 +43,37 @@ class BaseStream {
     unreachable("Abstract method `getByte` called");
   }
 
-  getBytes(length, forceClamped = false) {
+  getBytes(length) {
     unreachable("Abstract method `getBytes` called");
+  }
+
+  /**
+   * NOTE: This method can only be used to get image-data that is guaranteed
+   *       to be fully loaded, since otherwise intermittent errors may occur;
+   *       note the `ObjectLoader` class.
+   */
+  async getImageData(length, decoderOptions) {
+    return this.getBytes(length, decoderOptions);
+  }
+
+  async asyncGetBytes() {
+    unreachable("Abstract method `asyncGetBytes` called");
+  }
+
+  get isAsync() {
+    return false;
+  }
+
+  get isAsyncDecoder() {
+    return false;
+  }
+
+  get canAsyncDecodeImageFromBuffer() {
+    return false;
+  }
+
+  async getTransferableImage() {
+    return null;
   }
 
   peekByte() {
@@ -52,8 +84,8 @@ class BaseStream {
     return peekedByte;
   }
 
-  peekBytes(length, forceClamped = false) {
-    const bytes = this.getBytes(length, forceClamped);
+  peekBytes(length) {
+    const bytes = this.getBytes(length);
     this.pos -= bytes.length;
     return bytes;
   }
@@ -80,7 +112,7 @@ class BaseStream {
   }
 
   getString(length) {
-    return bytesToString(this.getBytes(length, /* forceClamped = */ false));
+    return bytesToString(this.getBytes(length));
   }
 
   skip(n) {

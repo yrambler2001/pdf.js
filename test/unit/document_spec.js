@@ -66,6 +66,9 @@ describe("document", function () {
           }
           return value;
         },
+        get evaluatorOptions() {
+          return { isOffscreenCanvasSupported: false };
+        },
       };
       const pdfDocument = new PDFDocument(pdfManager, stream);
       pdfDocument.xref = xref;
@@ -247,7 +250,7 @@ describe("document", function () {
 
       acroForm.set("Fields", [parentRef]);
       pdfDocument = getDocument(acroForm, xref);
-      fields = await pdfDocument.fieldObjects;
+      fields = (await pdfDocument.fieldObjects).allFields;
 
       for (const [name, objs] of Object.entries(fields)) {
         fields[name] = objs.map(obj => obj.id);

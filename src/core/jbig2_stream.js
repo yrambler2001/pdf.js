@@ -13,8 +13,9 @@
  * limitations under the License.
  */
 
-import { isDict, isStream } from "./primitives.js";
+import { BaseStream } from "./base_stream.js";
 import { DecodeStream } from "./decode_stream.js";
+import { Dict } from "./primitives.js";
 import { Jbig2Image } from "./jbig2.js";
 import { shadow } from "../shared/util.js";
 
@@ -43,20 +44,25 @@ class Jbig2Stream extends DecodeStream {
   }
 
   readBlock() {
+    this.decodeImage();
+  }
+
+  decodeImage(bytes) {
     if (this.eof) {
-      return;
+      return this.buffer;
     }
+    bytes ||= this.bytes;
     const jbig2Image = new Jbig2Image();
 
     const chunks = [];
-    if (isDict(this.params)) {
+    if (this.params instanceof Dict) {
       const globalsStream = this.params.get("JBIG2Globals");
-      if (isStream(globalsStream)) {
+      if (globalsStream instanceof BaseStream) {
         const globals = globalsStream.getBytes();
         chunks.push({ data: globals, start: 0, end: globals.length });
       }
     }
-    chunks.push({ data: this.bytes, start: 0, end: this.bytes.length });
+    chunks.push({ data: bytes, start: 0, end: bytes.length });
     const data = jbig2Image.parseChunks(chunks);
     const dataLength = data.length;
 
@@ -67,6 +73,12 @@ class Jbig2Stream extends DecodeStream {
     this.buffer = data;
     this.bufferLength = dataLength;
     this.eof = true;
+
+    return this.buffer;
+  }
+
+  get canAsyncDecodeImageFromBuffer() {
+    return this.stream.isAsync;
   }
 }
 

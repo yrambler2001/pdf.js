@@ -13,8 +13,16 @@
  * limitations under the License.
  */
 
-import { createValidAbsoluteUrl, unreachable, warn } from "../shared/util.js";
+import {
+  createValidAbsoluteUrl,
+  FeatureTest,
+  unreachable,
+  warn,
+} from "../shared/util.js";
 import { ChunkedStreamManager } from "./chunked_stream.js";
+import { ImageResizer } from "./image_resizer.js";
+import { JpegStream } from "./jpeg_stream.js";
+import { JpxImage } from "./jpx.js";
 import { MissingDataException } from "./core_utils.js";
 import { PDFDocument } from "./document.js";
 import { Stream } from "./stream.js";
@@ -31,10 +39,41 @@ function parseDocBaseUrl(url) {
 }
 
 class BasePdfManager {
-  constructor() {
-    if (this.constructor === BasePdfManager) {
+  constructor({
+    // source,
+    // disableAutoFetch,
+    docBaseUrl,
+    docId,
+    enableXfa,
+    evaluatorOptions,
+    handler,
+    // length,
+    password,
+    // rangeChunkSize,
+  }) {
+    if (
+      (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) &&
+      this.constructor === BasePdfManager
+    ) {
       unreachable("Cannot initialize BasePdfManager.");
     }
+    this._docBaseUrl = parseDocBaseUrl(docBaseUrl);
+    this._docId = docId;
+    this._password = password;
+    this.enableXfa = enableXfa;
+
+    // Check `OffscreenCanvas` and `ImageDecoder` support once,
+    // rather than repeatedly throughout the worker-thread code.
+    evaluatorOptions.isOffscreenCanvasSupported &&=
+      FeatureTest.isOffscreenCanvasSupported;
+    evaluatorOptions.isImageDecoderSupported &&=
+      FeatureTest.isImageDecoderSupported;
+    this.evaluatorOptions = Object.freeze(evaluatorOptions);
+
+    // Initially image-options once per document.
+    ImageResizer.setOptions(evaluatorOptions);
+    JpegStream.setOptions(evaluatorOptions);
+    JpxImage.setOptions({ ...evaluatorOptions, handler });
   }
 
   get docId() {
@@ -49,8 +88,8 @@ class BasePdfManager {
     return this._docBaseUrl;
   }
 
-  onLoadedStream() {
-    unreachable("Abstract method `onLoadedStream` called");
+  get catalog() {
+    return this.pdfDocument.catalog;
   }
 
   ensureDoc(prop, args) {
@@ -97,7 +136,7 @@ class BasePdfManager {
     unreachable("Abstract method `requestRange` called");
   }
 
-  requestLoadedStream() {
+  requestLoadedStream(noFetch = false) {
     unreachable("Abstract method `requestLoadedStream` called");
   }
 
@@ -115,16 +154,10 @@ class BasePdfManager {
 }
 
 class LocalPdfManager extends BasePdfManager {
-  constructor(docId, data, password, evaluatorOptions, enableXfa, docBaseUrl) {
-    super();
+  constructor(args) {
+    super(args);
 
-    this._docId = docId;
-    this._password = password;
-    this._docBaseUrl = parseDocBaseUrl(docBaseUrl);
-    this.evaluatorOptions = evaluatorOptions;
-    this.enableXfa = enableXfa;
-
-    const stream = new Stream(data);
+    const stream = new Stream(args.source);
     this.pdfDocument = new PDFDocument(this, stream);
     this._loadedStreamPromise = Promise.resolve(stream);
   }
@@ -141,9 +174,7 @@ class LocalPdfManager extends BasePdfManager {
     return Promise.resolve();
   }
 
-  requestLoadedStream() {}
-
-  onLoadedStream() {
+  requestLoadedStream(noFetch = false) {
     return this._loadedStreamPromise;
   }
 
@@ -151,25 +182,11 @@ class LocalPdfManager extends BasePdfManager {
 }
 
 class NetworkPdfManager extends BasePdfManager {
-  constructor(
-    docId,
-    pdfNetworkStream,
-    args,
-    evaluatorOptions,
-    enableXfa,
-    docBaseUrl
-  ) {
-    super();
+  constructor(args) {
+    super(args);
 
-    this._docId = docId;
-    this._password = args.password;
-    this._docBaseUrl = parseDocBaseUrl(docBaseUrl);
-    this.msgHandler = args.msgHandler;
-    this.evaluatorOptions = evaluatorOptions;
-    this.enableXfa = enableXfa;
-
-    this.streamManager = new ChunkedStreamManager(pdfNetworkStream, {
-      msgHandler: args.msgHandler,
+    this.streamManager = new ChunkedStreamManager(args.source, {
+      msgHandler: args.handler,
       length: args.length,
       disableAutoFetch: args.disableAutoFetch,
       rangeChunkSize: args.rangeChunkSize,
@@ -197,16 +214,12 @@ class NetworkPdfManager extends BasePdfManager {
     return this.streamManager.requestRange(begin, end);
   }
 
-  requestLoadedStream() {
-    this.streamManager.requestAllChunks();
+  requestLoadedStream(noFetch = false) {
+    return this.streamManager.requestAllChunks(noFetch);
   }
 
   sendProgressiveData(chunk) {
     this.streamManager.onReceiveData({ chunk });
-  }
-
-  onLoadedStream() {
-    return this.streamManager.onLoadedStream();
   }
 
   terminate(reason) {

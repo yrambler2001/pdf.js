@@ -53,11 +53,8 @@ window.onload = function () {
   function hashParameters() {
     const query = window.location.hash.substring(1);
     const params = new Map();
-    for (const part of query.split(/[&;]/)) {
-      const param = part.split("="),
-        key = param[0].toLowerCase(),
-        value = param.length > 1 ? param[1] : "";
-      params.set(decodeURIComponent(key), decodeURIComponent(value));
+    for (const [key, value] of new URLSearchParams(query)) {
+      params.set(key.toLowerCase(), value);
     }
     return params;
   }
@@ -82,7 +79,7 @@ window.onload = function () {
     r.setAttribute("y", (gMagZoom * -gMagHeight) / 2);
     r.setAttribute("width", gMagZoom * gMagWidth);
     r.setAttribute("height", gMagZoom * gMagHeight);
-    mag.appendChild(r);
+    mag.append(r);
     mag.setAttribute(
       "transform",
       "translate(" +
@@ -127,8 +124,7 @@ window.onload = function () {
         p2.setAttribute("stroke-width", "1px");
         p2.setAttribute("fill", "#888");
 
-        mag.appendChild(p1);
-        mag.appendChild(p2);
+        mag.append(p1, p2);
         gMagPixPaths[x][y] = [p1, p2];
       }
     }
@@ -150,20 +146,17 @@ window.onload = function () {
     }
   }
 
-  function loadFromWeb(url) {
+  async function loadFromWeb(url) {
     const lastSlash = url.lastIndexOf("/");
     if (lastSlash) {
       gPath = url.substring(0, lastSlash + 1);
     }
 
-    const r = new XMLHttpRequest();
-    r.open("GET", url);
-    r.onreadystatechange = function () {
-      if (r.readyState === 4) {
-        processLog(r.response);
-      }
-    };
-    r.send(null);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(response.statusText);
+    }
+    processLog(await response.text());
   }
 
   function fileEntryChanged() {
@@ -221,9 +214,9 @@ window.onload = function () {
         const extra = match[4];
 
         gTestItems.push({
-          pass: !state.match(/FAIL$/),
+          pass: !state.endsWith("FAIL"),
           // only one of the following three should ever be true
-          unexpected: !!state.match(/^TEST-UNEXPECTED/),
+          unexpected: state.startsWith("TEST-UNEXPECTED"),
           random: random === "(EXPECTED RANDOM)",
           skip: extra === " (SKIP)",
           url,
@@ -231,10 +224,17 @@ window.onload = function () {
         });
         continue;
       }
-      match = line.match(/^ {2}IMAGE[^:]*: (.*)$/);
+      match = line.match(
+        /^ {2}IMAGE[^:]*\((\d+\.?\d*)x(\d+\.?\d*)x(\d+\.?\d*)\): (.*)$/
+      );
       if (match) {
-        const item = gTestItems[gTestItems.length - 1];
-        item.images.push(match[1]);
+        const item = gTestItems.at(-1);
+        item.images.push({
+          width: parseFloat(match[1]),
+          height: parseFloat(match[2]),
+          outputScale: parseFloat(match[3]),
+          file: match[4],
+        });
       }
     }
     buildViewer();
@@ -248,11 +248,9 @@ window.onload = function () {
 
     // const cell = ID("itemlist");
     const table = document.getElementById("itemtable");
-    while (table.childNodes.length > 0) {
-      table.removeChild(table.childNodes[table.childNodes.length - 1]);
-    }
+    table.textContent = ""; // Remove any table contents from the DOM.
     const tbody = document.createElement("tbody");
-    table.appendChild(tbody);
+    table.append(tbody);
 
     for (const i in gTestItems) {
       const item = gTestItems[i];
@@ -277,8 +275,8 @@ window.onload = function () {
         text += "S";
         rowclass += " skip";
       }
-      td.appendChild(document.createTextNode(text));
-      tr.appendChild(td);
+      td.append(document.createTextNode(text));
+      tr.append(td);
 
       td = document.createElement("td");
       td.id = "url" + i;
@@ -291,20 +289,20 @@ window.onload = function () {
         a.id = i;
         a.className = "image";
         a.href = "#";
-        a.appendChild(text);
-        td.appendChild(a);
+        a.append(text);
+        td.append(a);
       } else {
-        td.appendChild(text);
+        td.append(text);
       }
-      tr.appendChild(td);
+      tr.append(td);
       tr.className = rowclass;
-      tbody.appendChild(tr);
+      tbody.append(tr);
     }
 
     // Bind an event handler to each image link
     const images = document.getElementsByClassName("image");
-    for (let i = 0; i < images.length; i++) {
-      images[i].addEventListener(
+    for (const image of images) {
+      image.addEventListener(
         "click",
         function (e) {
           showImages(e.target.id);
@@ -336,20 +334,36 @@ window.onload = function () {
     }
     gSelected = i;
     ID("url" + gSelected).classList.add("selected");
+    ID("url" + gSelected).scrollIntoView();
     const item = gTestItems[i];
     const cell = ID("images");
 
     ID("image1").style.display = "";
+    const scale = item.images[0].outputScale / window.devicePixelRatio;
+    ID("image1").setAttribute("width", item.images[0].width * scale);
+    ID("image1").setAttribute("height", item.images[0].height * scale);
+
+    ID("svg").setAttribute("width", item.images[0].width * scale);
+    ID("svg").setAttribute("height", item.images[0].height * scale);
+
     ID("image2").style.display = "none";
+    if (item.images[1]) {
+      ID("image2").setAttribute("width", item.images[1].width * scale);
+      ID("image2").setAttribute("height", item.images[1].height * scale);
+    }
     ID("diffrect").style.display = "none";
     ID("imgcontrols").reset();
 
-    ID("image1").setAttributeNS(XLINK_NS, "xlink:href", gPath + item.images[0]);
+    ID("image1").setAttributeNS(
+      XLINK_NS,
+      "xlink:href",
+      gPath + item.images[0].file
+    );
     // Making the href be #image1 doesn't seem to work
     ID("feimage1").setAttributeNS(
       XLINK_NS,
       "xlink:href",
-      gPath + item.images[0]
+      gPath + item.images[0].file
     );
     if (item.images.length === 1) {
       ID("imgcontrols").style.display = "none";
@@ -358,28 +372,22 @@ window.onload = function () {
       ID("image2").setAttributeNS(
         XLINK_NS,
         "xlink:href",
-        gPath + item.images[1]
+        gPath + item.images[1].file
       );
       // Making the href be #image2 doesn't seem to work
       ID("feimage2").setAttributeNS(
         XLINK_NS,
         "xlink:href",
-        gPath + item.images[1]
+        gPath + item.images[1].file
       );
     }
     cell.style.display = "";
-    getImageData(item.images[0], function (data) {
+    getImageData(item.images[0].file, function (data) {
       gImage1Data = data;
-      syncSVGSize(gImage1Data);
     });
-    getImageData(item.images[1], function (data) {
+    getImageData(item.images[1].file, function (data) {
       gImage2Data = data;
     });
-  }
-
-  function syncSVGSize(imageData) {
-    ID("svg").setAttribute("width", imageData.width);
-    ID("svg").setAttribute("height", imageData.height);
   }
 
   function showImage(i) {
@@ -399,9 +407,9 @@ window.onload = function () {
   function flashPixels(on) {
     const stroke = on ? "#FF0000" : "#CCC";
     const strokeWidth = on ? "2px" : "1px";
-    for (let i = 0; i < gFlashingPixels.length; i++) {
-      gFlashingPixels[i].setAttribute("stroke", stroke);
-      gFlashingPixels[i].setAttribute("stroke-width", strokeWidth);
+    for (const pixel of gFlashingPixels) {
+      pixel.setAttribute("stroke", stroke);
+      pixel.setAttribute("stroke-width", strokeWidth);
     }
   }
 
@@ -419,7 +427,7 @@ window.onload = function () {
   }
 
   function canvasPixelAsHex(data, x, y) {
-    const offset = (y * data.width + x) * 4;
+    const offset = (y * data.width + x) * 4 * window.devicePixelRatio;
     const r = data.data[offset];
     const g = data.data[offset + 1];
     const b = data.data[offset + 2];
@@ -472,8 +480,8 @@ window.onload = function () {
           p2.setAttribute("fill", color2);
           if (color1 !== color2) {
             gFlashingPixels.push(p1, p2);
-            p1.parentNode.appendChild(p1);
-            p2.parentNode.appendChild(p2);
+            p1.parentNode.append(p1);
+            p2.parentNode.append(p2);
           }
           if (i === 0 && j === 0) {
             centerPixelColor1 = color1;

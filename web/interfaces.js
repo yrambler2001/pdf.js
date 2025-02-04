@@ -14,6 +14,11 @@
  */
 /* eslint-disable getter-return */
 
+/** @typedef {import("../src/display/api").PDFPageProxy} PDFPageProxy */
+// eslint-disable-next-line max-len
+/** @typedef {import("../src/display/display_utils").PageViewport} PageViewport */
+/** @typedef {import("./ui_utils").RenderingStates} RenderingStates */
+
 /**
  * @interface
  */
@@ -46,6 +51,11 @@ class IPDFLinkService {
   /**
    * @type {boolean}
    */
+  get isInPresentationMode() {}
+
+  /**
+   * @type {boolean}
+   */
   get externalLinkEnabled() {}
 
   /**
@@ -62,6 +72,13 @@ class IPDFLinkService {
    * @param {number|string} val - The page number, or page label.
    */
   goToPage(val) {}
+
+  /**
+   * @param {HTMLAnchorElement} link
+   * @param {string} url
+   * @param {boolean} [newWindow]
+   */
+  addLinkAttributes(link, url, newWindow = false) {}
 
   /**
    * @param dest - The PDF destination object.
@@ -86,20 +103,9 @@ class IPDFLinkService {
   executeNamedAction(action) {}
 
   /**
-   * @param {number} pageNum - page number.
-   * @param {Object} pageRef - reference to the page.
+   * @param {Object} action
    */
-  cachePageRef(pageNum, pageRef) {}
-
-  /**
-   * @param {number} pageNumber
-   */
-  isPageVisible(pageNumber) {}
-
-  /**
-   * @param {number} pageNumber
-   */
-  isPageCached(pageNumber) {}
+  executeSetOCGState(action) {}
 }
 
 /**
@@ -124,84 +130,34 @@ class IRenderableView {
   /**
    * @returns {Promise} Resolved on draw completion.
    */
-  draw() {}
+  async draw() {}
 }
 
 /**
  * @interface
  */
-class IPDFTextLayerFactory {
+class IDownloadManager {
   /**
-   * @param {HTMLDivElement} textLayerDiv
-   * @param {number} pageIndex
-   * @param {PageViewport} viewport
-   * @param {boolean} enhanceTextSelection
-   * @param {EventBus} eventBus
-   * @param {TextHighlighter} highlighter
-   * @returns {TextLayerBuilder}
+   * @param {Uint8Array} data
+   * @param {string} filename
+   * @param {string} [contentType]
    */
-  createTextLayerBuilder(
-    textLayerDiv,
-    pageIndex,
-    viewport,
-    enhanceTextSelection = false,
-    eventBus,
-    highlighter
-  ) {}
-}
+  downloadData(data, filename, contentType) {}
 
-/**
- * @interface
- */
-class IPDFAnnotationLayerFactory {
   /**
-   * @param {HTMLDivElement} pageDiv
-   * @param {PDFPage} pdfPage
-   * @param {AnnotationStorage} [annotationStorage] - Storage for annotation
-   *   data in forms.
-   * @param {string} [imageResourcesPath] - Path for image resources, mainly
-   *   for annotation icons. Include trailing slash.
-   * @param {boolean} renderForms
-   * @param {IL10n} l10n
-   * @param {boolean} [enableScripting]
-   * @param {Promise<boolean>} [hasJSActionsPromise]
-   * @param {Object} [mouseState]
-   * @returns {AnnotationLayerBuilder}
+   * @param {Uint8Array} data
+   * @param {string} filename
+   * @param {string | null} [dest]
+   * @returns {boolean} Indicating if the data was opened.
    */
-  createAnnotationLayerBuilder(
-    pageDiv,
-    pdfPage,
-    annotationStorage = null,
-    imageResourcesPath = "",
-    renderForms = true,
-    l10n = undefined,
-    enableScripting = false,
-    hasJSActionsPromise = null,
-    mouseState = null
-  ) {}
-}
+  openOrDownloadData(data, filename, dest = null) {}
 
-/**
- * @interface
- */
-class IPDFXfaLayerFactory {
   /**
-   * @param {HTMLDivElement} pageDiv
-   * @param {PDFPage} pdfPage
-   * @returns {XfaLayerBuilder}
+   * @param {Uint8Array} data
+   * @param {string} url
+   * @param {string} filename
    */
-  createXfaLayerBuilder(pageDiv, pdfPage) {}
-}
-
-/**
- * @interface
- */
-class IPDFStructTreeLayerFactory {
-  /**
-   * @param {PDFPage} pdfPage
-   * @returns {StructTreeLayerBuilder}
-   */
-  createStructTreeLayerBuilder(pdfPage) {}
+  download(data, url, filename) {}
 }
 
 /**
@@ -209,25 +165,25 @@ class IPDFStructTreeLayerFactory {
  */
 class IL10n {
   /**
-   * @returns {Promise<string>} - Resolves to the current locale.
+   * @returns {string} - The current locale.
    */
-  async getLanguage() {}
+  getLanguage() {}
 
   /**
-   * @returns {Promise<string>} - Resolves to 'rtl' or 'ltr'.
+   * @returns {string} - 'rtl' or 'ltr'.
    */
-  async getDirection() {}
+  getDirection() {}
 
   /**
    * Translates text identified by the key and adds/formats data using the args
    * property bag. If the key was not found, translation falls back to the
    * fallback text.
-   * @param {string} key
-   * @param {object} args
-   * @param {string} fallback
+   * @param {Array | string} ids
+   * @param {Object | null} [args]
+   * @param {string} [fallback]
    * @returns {Promise<string>}
    */
-  async get(key, args, fallback) {}
+  async get(ids, args = null, fallback) {}
 
   /**
    * Translates HTML element.
@@ -235,14 +191,37 @@ class IL10n {
    * @returns {Promise<void>}
    */
   async translate(element) {}
+
+  /**
+   * Pause the localization.
+   */
+  pause() {}
+
+  /**
+   * Resume the localization.
+   */
+  resume() {}
+}
+
+/**
+ * @interface
+ */
+class IPDFPrintServiceFactory {
+  static initGlobals() {}
+
+  static get supportsPrinting() {
+    return false;
+  }
+
+  static createPrintService() {
+    throw new Error("Not implemented: createPrintService");
+  }
 }
 
 export {
+  IDownloadManager,
   IL10n,
-  IPDFAnnotationLayerFactory,
   IPDFLinkService,
-  IPDFStructTreeLayerFactory,
-  IPDFTextLayerFactory,
-  IPDFXfaLayerFactory,
+  IPDFPrintServiceFactory,
   IRenderableView,
 };

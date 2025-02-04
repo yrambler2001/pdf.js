@@ -55,15 +55,10 @@ import {
   $tabIndex,
   $text,
   $toHTML,
+  $toPages,
   $toStyle,
   $uid,
-  ContentObject,
-  Option01,
-  OptionObject,
-  StringObject,
-  XFAObject,
-  XFAObjectArray,
-} from "./xfa_object.js";
+} from "./symbol_utils.js";
 import { $buildXFAObject, NamespaceIds } from "./namespaces.js";
 import {
   addHTML,
@@ -76,6 +71,7 @@ import {
   createWrapper,
   fixDimensions,
   fixTextIndent,
+  fixURL,
   isPrintOnly,
   layoutClass,
   layoutNode,
@@ -86,6 +82,15 @@ import {
   setPara,
   toStyle,
 } from "./html_utils.js";
+import {
+  ContentObject,
+  Option01,
+  OptionObject,
+  StringObject,
+  XFAObject,
+  XFAObjectArray,
+} from "./xfa_object.js";
+import { fromBase64Util, Util, warn } from "../../shared/util.js";
 import {
   getBBox,
   getColor,
@@ -98,8 +103,8 @@ import {
   getStringOption,
   HTMLResult,
 } from "./utils.js";
-import { stringToBytes, Util, warn } from "../../shared/util.js";
 import { getMetrics } from "./fonts.js";
+import { recoverJsURL } from "../core_utils.js";
 import { searchNode } from "./som.js";
 
 const TEMPLATE_NS_ID = NamespaceIds.template.id;
@@ -122,6 +127,31 @@ const MAX_EMPTY_PAGES = 3;
 const DEFAULT_TAB_INDEX = 5000;
 
 const HEADING_PATTERN = /^H(\d+)$/;
+
+// Allowed mime types for images
+const MIMES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/jpg",
+  "image/pjpeg",
+  "image/png",
+  "image/apng",
+  "image/x-png",
+  "image/bmp",
+  "image/x-ms-bmp",
+  "image/tiff",
+  "image/tif",
+  "application/octet-stream",
+]);
+
+const IMAGES_HEADERS = [
+  [[0x42, 0x4d], "image/bmp"],
+  [[0xff, 0xd8, 0xff], "image/jpeg"],
+  [[0x49, 0x49, 0x2a, 0x00], "image/tiff"],
+  [[0x4d, 0x4d, 0x00, 0x2a], "image/tiff"],
+  [[0x47, 0x49, 0x46, 0x38, 0x39, 0x61], "image/gif"],
+  [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], "image/png"],
+];
 
 function getBorderDims(node) {
   if (!node || !node.border) {
@@ -174,6 +204,10 @@ function* getContainedChildren(node) {
     }
     yield child;
   }
+}
+
+function isRequired(node) {
+  return node.validate?.nullTest === "error";
 }
 
 function setTabIndex(node) {
@@ -237,11 +271,7 @@ function applyAssist(obj, attributes) {
   } else {
     const parent = obj[$getParent]();
     if (parent.layout === "row") {
-      if (parent.assist && parent.assist.role === "TH") {
-        attributes.role = "columnheader";
-      } else {
-        attributes.role = "cell";
-      }
+      attributes.role = parent.assist?.role === "TH" ? "columnheader" : "cell";
     }
   }
 }
@@ -342,23 +372,32 @@ function handleBreak(node) {
   const pageArea = target && target[$getParent]();
 
   let index;
+  let nextPageArea = pageArea;
   if (node.startNew) {
+    // startNew === 1 so we must create a new container (pageArea or
+    // contentArea).
     if (target) {
       const contentAreas = pageArea.contentArea.children;
-      index = contentAreas.findIndex(e => e === target) - 1;
+      const indexForCurrent = contentAreas.indexOf(currentContentArea);
+      const indexForTarget = contentAreas.indexOf(target);
+      if (indexForCurrent !== -1 && indexForCurrent < indexForTarget) {
+        // The next container is after the current container so
+        // we can stay on the same page.
+        nextPageArea = null;
+      }
+      index = indexForTarget - 1;
     } else {
-      index = currentPageArea.contentArea.children.findIndex(
-        e => e === currentContentArea
-      );
+      index = currentPageArea.contentArea.children.indexOf(currentContentArea);
     }
   } else if (target && target !== currentContentArea) {
     const contentAreas = pageArea.contentArea.children;
-    index = contentAreas.findIndex(e => e === target) - 1;
+    index = contentAreas.indexOf(target) - 1;
+    nextPageArea = pageArea === currentPageArea ? null : pageArea;
   } else {
     return false;
   }
 
-  node[$extra].target = pageArea === currentPageArea ? null : pageArea;
+  node[$extra].target = nextPageArea;
   node[$extra].index = index;
   return true;
 }
@@ -416,10 +455,10 @@ class Arc extends XFAObject {
   }
 
   [$toHTML]() {
-    const edge = this.edge ? this.edge : new Edge({});
+    const edge = this.edge || new Edge({});
     const edgeStyle = edge[$toStyle]();
     const style = Object.create(null);
-    if (this.fill && this.fill.presence === "visible") {
+    if (this.fill?.presence === "visible") {
       Object.assign(style, this.fill[$toStyle]());
     } else {
       style.fill = "transparent";
@@ -438,7 +477,7 @@ class Arc extends XFAObject {
       },
     };
 
-    if (this.startAngle === 0 && this.sweepAngle === 360) {
+    if (this.sweepAngle === 360) {
       arc = {
         name: "ellipse",
         attributes: {
@@ -453,12 +492,12 @@ class Arc extends XFAObject {
     } else {
       const startAngle = (this.startAngle * Math.PI) / 180;
       const sweepAngle = (this.sweepAngle * Math.PI) / 180;
-      const largeArc = this.sweepAngle - this.startAngle > 180 ? 1 : 0;
+      const largeArc = this.sweepAngle > 180 ? 1 : 0;
       const [x1, y1, x2, y2] = [
         50 * (1 + Math.cos(startAngle)),
         50 * (1 - Math.sin(startAngle)),
-        50 * (1 + Math.cos(sweepAngle)),
-        50 * (1 - Math.sin(sweepAngle)),
+        50 * (1 + Math.cos(startAngle + sweepAngle)),
+        50 * (1 - Math.sin(startAngle + sweepAngle)),
       ];
 
       arc = {
@@ -630,9 +669,7 @@ class Assist extends XFAObject {
   }
 
   [$toHTML]() {
-    return this.toolTip && this.toolTip[$content]
-      ? this.toolTip[$content]
-      : null;
+    return this.toolTip?.[$content] || null;
   }
 }
 
@@ -657,7 +694,7 @@ class Barcode extends XFAObject {
           "shift-jis",
           "ucs-2",
           "utf-16",
-        ].includes(k) || k.match(/iso-8859-[0-9]{2}/),
+        ].includes(k) || k.match(/iso-8859-\d{2}/),
     });
     this.checksum = getStringOption(attributes.checksum, [
       "none",
@@ -869,7 +906,7 @@ class Border extends XFAObject {
     if (!this[$extra]) {
       const edges = this.edge.children.slice();
       if (edges.length < 4) {
-        const defaultEdge = edges[edges.length - 1] || new Edge({});
+        const defaultEdge = edges.at(-1) || new Edge({});
         for (let i = edges.length; i < 4; i++) {
           edges.push(defaultEdge);
         }
@@ -893,7 +930,7 @@ class Border extends XFAObject {
     const { edges } = this[$getExtra]();
     const edgeStyles = edges.map(node => {
       const style = node[$toStyle]();
-      style.color = style.color || "#000000";
+      style.color ||= "#000000";
       return style;
     });
 
@@ -902,14 +939,14 @@ class Border extends XFAObject {
       Object.assign(style, this.margin[$toStyle]());
     }
 
-    if (this.fill && this.fill.presence === "visible") {
+    if (this.fill?.presence === "visible") {
       Object.assign(style, this.fill[$toStyle]());
     }
 
     if (this.corner.children.some(node => node.radius !== 0)) {
       const cornerStyles = this.corner.children.map(node => node[$toStyle]());
       if (cornerStyles.length === 2 || cornerStyles.length === 3) {
-        const last = cornerStyles[cornerStyles.length - 1];
+        const last = cornerStyles.at(-1);
         for (let i = cornerStyles.length; i < 4; i++) {
           cornerStyles.push(last);
         }
@@ -1042,7 +1079,10 @@ class Button extends XFAObject {
 
   [$toHTML](availableSpace) {
     // TODO: highlight.
-    return HTMLResult.success({
+
+    const parent = this[$getParent]();
+    const grandpa = parent[$getParent]();
+    const htmlButton = {
       name: "button",
       attributes: {
         id: this[$uid],
@@ -1050,7 +1090,37 @@ class Button extends XFAObject {
         style: {},
       },
       children: [],
-    });
+    };
+
+    for (const event of grandpa.event.children) {
+      // if (true) break;
+      if (event.activity !== "click" || !event.script) {
+        continue;
+      }
+      const jsURL = recoverJsURL(event.script[$content]);
+      if (!jsURL) {
+        continue;
+      }
+      const href = fixURL(jsURL.url);
+      if (!href) {
+        continue;
+      }
+
+      // we've an url so generate a <a>
+      htmlButton.children.push({
+        name: "a",
+        attributes: {
+          id: "link" + this[$uid],
+          href,
+          newWindow: jsURL.newWindow,
+          class: ["xfaLink"],
+          style: {},
+        },
+        children: [],
+      });
+    }
+
+    return HTMLResult.success(htmlButton);
   }
 }
 
@@ -1269,7 +1339,7 @@ class CheckButton extends XFAObject {
       off: (items[1] !== undefined ? items[1] : "off").toString(),
     };
 
-    const value = (field.value && field.value[$text]()) || "off";
+    const value = field.value?.[$text]() || "off";
     const checked = value === exportedValue.on || undefined;
     const container = field[$getSubformParent]();
     const fieldId = field[$uid];
@@ -1279,11 +1349,11 @@ class CheckButton extends XFAObject {
       groupId = container[$uid];
       type = "radio";
       className = "xfaRadio";
-      dataId = (container[$data] && container[$data][$uid]) || container[$uid];
+      dataId = container[$data]?.[$uid] || container[$uid];
     } else {
       type = "checkbox";
       className = "xfaCheckbox";
-      dataId = (field[$data] && field[$data][$uid]) || field[$uid];
+      dataId = field[$data]?.[$uid] || field[$uid];
     }
 
     const input = {
@@ -1298,11 +1368,17 @@ class CheckButton extends XFAObject {
         xfaOn: exportedValue.on,
         xfaOff: exportedValue.off,
         "aria-label": ariaLabel(field),
+        "aria-required": false,
       },
     };
 
     if (groupId) {
       input.attributes.name = groupId;
+    }
+
+    if (isRequired(field)) {
+      input.attributes["aria-required"] = true;
+      input.attributes.required = true;
     }
 
     return HTMLResult.success({
@@ -1343,9 +1419,9 @@ class ChoiceList extends XFAObject {
     const style = toStyle(this, "border", "margin");
     const ui = this[$getParent]();
     const field = ui[$getParent]();
-    const fontSize = (field.font && field.font.size) || 10;
+    const fontSize = field.font?.size || 10;
     const optionStyle = {
-      fontSize: `calc(${fontSize}px * var(--zoom-factor))`,
+      fontSize: `calc(${fontSize}px * var(--scale-factor))`,
     };
     const children = [];
 
@@ -1361,7 +1437,7 @@ class ChoiceList extends XFAObject {
       const values = items.children[saveIndex][$toHTML]().html;
 
       let selected = false;
-      const value = (field.value && field.value[$text]()) || "";
+      const value = field.value?.[$text]() || "";
       for (let i = 0, ii = displayed.length; i < ii; i++) {
         const option = {
           name: "option",
@@ -1392,10 +1468,16 @@ class ChoiceList extends XFAObject {
     const selectAttributes = {
       class: ["xfaSelect"],
       fieldId: field[$uid],
-      dataId: (field[$data] && field[$data][$uid]) || field[$uid],
+      dataId: field[$data]?.[$uid] || field[$uid],
       style,
       "aria-label": ariaLabel(field),
+      "aria-required": false,
     };
+
+    if (isRequired(field)) {
+      selectAttributes["aria-required"] = true;
+      selectAttributes.required = true;
+    }
 
     if (this.open === "multiSelect") {
       selectAttributes.multiple = true;
@@ -1630,12 +1712,18 @@ class DateTimeEdit extends XFAObject {
       attributes: {
         type: "text",
         fieldId: field[$uid],
-        dataId: (field[$data] && field[$data][$uid]) || field[$uid],
+        dataId: field[$data]?.[$uid] || field[$uid],
         class: ["xfaTextfield"],
         style,
         "aria-label": ariaLabel(field),
+        "aria-required": false,
       },
     };
+
+    if (isRequired(field)) {
+      html.attributes["aria-required"] = true;
+      html.attributes.required = true;
+    }
 
     return HTMLResult.success({
       name: "label",
@@ -2332,11 +2420,7 @@ class ExclGroup extends XFAObject {
       return false;
     }
 
-    if (
-      parent.layout &&
-      parent.layout.endsWith("-tb") &&
-      parent[$extra].numberInLine !== 0
-    ) {
+    if (parent.layout?.endsWith("-tb") && parent[$extra].numberInLine !== 0) {
       // See comment in Subform::[$isSplittable] for an explanation.
       return false;
     }
@@ -2862,7 +2946,7 @@ class Field extends XFAObject {
     }
 
     if (this[$tabIndex]) {
-      if (ui.children && ui.children[0]) {
+      if (ui.children?.[0]) {
         ui.children[0].attributes.tabindex = this[$tabIndex];
       } else {
         ui.attributes.tabindex = this[$tabIndex];
@@ -2873,7 +2957,12 @@ class Field extends XFAObject {
       ui.attributes.style = Object.create(null);
     }
 
+    let aElement = null;
+
     if (this.ui.button) {
+      if (ui.children.length === 1) {
+        [aElement] = ui.children.splice(0, 1);
+      }
       Object.assign(ui.attributes.style, borderStyle);
     } else {
       Object.assign(style, borderStyle);
@@ -2896,7 +2985,7 @@ class Field extends XFAObject {
             value = htmlValue.children[0].value;
           }
         }
-        if (this.ui.textEdit && this.value.text && this.value.text.maxChars) {
+        if (this.ui.textEdit && this.value.text?.maxChars) {
           ui.children[0].attributes.maxLength = this.value.text.maxChars;
         }
 
@@ -2915,7 +3004,7 @@ class Field extends XFAObject {
       }
     }
 
-    if (!this.ui.imageEdit && ui.children && ui.children[0] && this.h) {
+    if (!this.ui.imageEdit && ui.children?.[0] && this.h) {
       borderDims = borderDims || getBorderDims(this.ui[$getExtra]());
 
       let captionHeight = 0;
@@ -2929,6 +3018,10 @@ class Field extends XFAObject {
       } else {
         ui.children[0].attributes.style.height = "100%";
       }
+    }
+
+    if (aElement) {
+      ui.children.push(aElement);
     }
 
     if (!caption) {
@@ -3050,7 +3143,7 @@ class Fill extends XFAObject {
       return style;
     }
 
-    if (this.color && this.color.value) {
+    if (this.color?.value) {
       const color = this.color[$toStyle]();
       style[color.startsWith("#") ? propName : altPropName] = color;
     }
@@ -3321,6 +3414,10 @@ class Image extends StringObject {
   }
 
   [$toHTML]() {
+    if (this.contentType && !MIMES.has(this.contentType.toLowerCase())) {
+      return HTMLResult.EMPTY;
+    }
+
     let buffer =
       this[$globalData].images && this[$globalData].images.get(this.href);
     if (!buffer && (this.href || !this[$content])) {
@@ -3330,11 +3427,26 @@ class Image extends StringObject {
     }
 
     if (!buffer && this.transferEncoding === "base64") {
-      buffer = stringToBytes(atob(this[$content]));
+      buffer = fromBase64Util(this[$content]);
     }
 
     if (!buffer) {
       return HTMLResult.EMPTY;
+    }
+
+    if (!this.contentType) {
+      for (const [header, type] of IMAGES_HEADERS) {
+        if (
+          buffer.length > header.length &&
+          header.every((x, i) => x === buffer[i])
+        ) {
+          this.contentType = type;
+          break;
+        }
+      }
+      if (!this.contentType) {
+        return HTMLResult.EMPTY;
+      }
     }
 
     // TODO: Firefox doesn't support natively tiff (and tif) format.
@@ -3530,7 +3642,7 @@ class Line extends XFAObject {
 
   [$toHTML]() {
     const parent = this[$getParent]()[$getParent]();
-    const edge = this.edge ? this.edge : new Edge({});
+    const edge = this.edge || new Edge({});
     const edgeStyle = edge[$toStyle]();
     const style = Object.create(null);
     const thickness = edge.presence === "visible" ? edge.thickness : 0;
@@ -3546,12 +3658,10 @@ class Line extends XFAObject {
     } else if (parent.h <= thickness) {
       [x1, y1, x2, y2] = [0, "50%", "100%", "50%"];
       height = style.strokeWidth;
+    } else if (this.slope === "\\") {
+      [x1, y1, x2, y2] = [0, 0, "100%", "100%"];
     } else {
-      if (this.slope === "\\") {
-        [x1, y1, x2, y2] = [0, 0, "100%", "100%"];
-      } else {
-        [x1, y1, x2, y2] = [0, "100%", "100%", 0];
-      }
+      [x1, y1, x2, y2] = [0, "100%", "100%", 0];
     }
 
     const line = {
@@ -3757,12 +3867,18 @@ class NumericEdit extends XFAObject {
       attributes: {
         type: "text",
         fieldId: field[$uid],
-        dataId: (field[$data] && field[$data][$uid]) || field[$uid],
+        dataId: field[$data]?.[$uid] || field[$uid],
         class: ["xfaTextfield"],
         style,
         "aria-label": ariaLabel(field),
+        "aria-required": false,
       },
     };
+
+    if (isRequired(field)) {
+      html.attributes["aria-required"] = true;
+      html.attributes.required = true;
+    }
 
     return HTMLResult.success({
       name: "label",
@@ -3874,9 +3990,9 @@ class Overflow extends XFAObject {
       const leader = root[$searchNode](this.leader, parent);
       const trailer = root[$searchNode](this.trailer, parent);
       this[$extra] = {
-        target: (target && target[0]) || null,
-        leader: (leader && leader[0]) || null,
-        trailer: (trailer && trailer[0]) || null,
+        target: target?.[0] || null,
+        leader: leader?.[0] || null,
+        trailer: trailer?.[0] || null,
         addLeader: false,
         addTrailer: false,
       };
@@ -4201,7 +4317,7 @@ class Para extends XFAObject {
       style.paddingLeft = measureToString(this.marginLeft);
     }
     if (this.marginRight !== "") {
-      style.paddingight = measureToString(this.marginRight);
+      style.paddingRight = measureToString(this.marginRight);
     }
     if (this.spaceAbove !== "") {
       style.paddingTop = measureToString(this.spaceAbove);
@@ -4483,7 +4599,7 @@ class Rectangle extends XFAObject {
       : new Edge({});
     const edgeStyle = edge[$toStyle]();
     const style = Object.create(null);
-    if (this.fill && this.fill.presence === "visible") {
+    if (this.fill?.presence === "visible") {
       Object.assign(style, this.fill[$toStyle]());
     } else {
       style.fill = "transparent";
@@ -4843,12 +4959,6 @@ class Subform extends XFAObject {
       return false;
     }
 
-    const contentArea = this[$getTemplateRoot]()[$extra].currentContentArea;
-
-    if (this.overflow && this.overflow[$getExtra]().target === contentArea) {
-      return false;
-    }
-
     if (this[$extra]._isSplittable !== undefined) {
       return this[$extra]._isSplittable;
     }
@@ -4863,11 +4973,7 @@ class Subform extends XFAObject {
       return false;
     }
 
-    if (
-      parent.layout &&
-      parent.layout.endsWith("-tb") &&
-      parent[$extra].numberInLine !== 0
-    ) {
+    if (parent.layout?.endsWith("-tb") && parent[$extra].numberInLine !== 0) {
       // If parent can fit in w=100 and there's already an element which takes
       // 90 then we've 10 for this element. Suppose this element has a tb layout
       // and 5 elements have a width of 7 and the 6th has a width of 20:
@@ -4947,7 +5053,7 @@ class Subform extends XFAObject {
       }
     }
 
-    if (this[$extra] && this[$extra].afterBreakAfter) {
+    if (this[$extra]?.afterBreakAfter) {
       return HTMLResult.EMPTY;
     }
 
@@ -4982,17 +5088,7 @@ class Subform extends XFAObject {
     });
 
     const root = this[$getTemplateRoot]();
-    const currentContentArea = root[$extra].currentContentArea;
     const savedNoLayoutFailure = root[$extra].noLayoutFailure;
-
-    if (this.overflow) {
-      // In case of overflow in the current content area,
-      // elements must be kept in this subform so it implies
-      // to have no errors on layout failures.
-      root[$extra].noLayoutFailure =
-        root[$extra].noLayoutFailure ||
-        this.overflow[$getExtra]().target === currentContentArea;
-    }
 
     const isSplittable = this[$isSplittable]();
     if (!isSplittable) {
@@ -5136,6 +5232,13 @@ class Subform extends XFAObject {
       style.height = measureToString(height);
     }
 
+    if (
+      (style.width === "0px" || style.height === "0px") &&
+      children.length === 0
+    ) {
+      return HTMLResult.EMPTY;
+    }
+
     const html = {
       name: "div",
       attributes,
@@ -5274,7 +5377,7 @@ class Submit extends XFAObject {
           "shift-jis",
           "ucs-2",
           "utf-16",
-        ].includes(k) || k.match(/iso-8859-[0-9]{2}/),
+        ].includes(k) || k.match(/iso-8859-\d{2}/),
     });
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
@@ -5323,7 +5426,12 @@ class Template extends XFAObject {
     return searchNode(this, container, expr, true, true);
   }
 
-  [$toHTML]() {
+  /**
+   * This function is a generator because the conversion into
+   * pages is done asynchronously and we want to save the state
+   * of the function where we were in the previous iteration.
+   */
+  *[$toPages]() {
     if (!this.subform.children.length) {
       return HTMLResult.success({
         name: "div",
@@ -5364,13 +5472,12 @@ class Template extends XFAObject {
     ) {
       breakBefore = root.subform.children[0].breakBefore.children[0];
       breakBeforeTarget = breakBefore.target;
-    } else if (root.break && root.break.beforeTarget) {
+    } else if (root.break?.beforeTarget) {
       breakBefore = root.break;
       breakBeforeTarget = breakBefore.beforeTarget;
     } else if (
       root.subform.children.length >= 1 &&
-      root.subform.children[0].break &&
-      root.subform.children[0].break.beforeTarget
+      root.subform.children[0].break?.beforeTarget
     ) {
       breakBefore = root.subform.children[0].break;
       breakBeforeTarget = breakBefore.beforeTarget;
@@ -5451,8 +5558,7 @@ class Template extends XFAObject {
       const flush = index => {
         const html = root[$flushHTML]();
         if (html) {
-          hasSomething =
-            hasSomething || (html.children && html.children.length !== 0);
+          hasSomething ||= html.children?.length > 0;
           htmlContentAreas[index].children.push(html);
         }
       };
@@ -5475,11 +5581,9 @@ class Template extends XFAObject {
         const html = root[$toHTML](space);
         if (html.success) {
           if (html.html) {
-            hasSomething =
-              hasSomething ||
-              (html.html.children && html.html.children.length !== 0);
+            hasSomething ||= html.html.children?.length > 0;
             htmlContentAreas[i].children.push(html.html);
-          } else if (!hasSomething) {
+          } else if (!hasSomething && mainHtml.children.length > 1) {
             mainHtml.children.pop();
           }
           return mainHtml;
@@ -5529,21 +5633,27 @@ class Template extends XFAObject {
 
           flush(i);
 
+          const currentIndex = i;
+
           i = Infinity;
           if (target instanceof PageArea) {
             // We must stop the contentAreas filling and go to the next page.
             targetPageArea = target;
           } else if (target instanceof ContentArea) {
-            const index = contentAreas.findIndex(e => e === target);
+            const index = contentAreas.indexOf(target);
             if (index !== -1) {
-              // In the next loop iteration `i` will be incremented, note the
-              // `continue` just below, hence we need to subtract one here.
-              i = index - 1;
+              if (index > currentIndex) {
+                // In the next loop iteration `i` will be incremented, note the
+                // `continue` just below, hence we need to subtract one here.
+                i = index - 1;
+              } else {
+                // The targetted contentArea has already been filled
+                // so create a new page.
+                startIndex = index;
+              }
             } else {
               targetPageArea = target[$getParent]();
-              startIndex = targetPageArea.contentArea.children.findIndex(
-                e => e === target
-              );
+              startIndex = targetPageArea.contentArea.children.indexOf(target);
             }
           }
           continue;
@@ -5561,6 +5671,7 @@ class Template extends XFAObject {
         }
       }
       pageArea = targetPageArea || pageArea[$getNextPage]();
+      yield null;
     }
   }
 }
@@ -5602,7 +5713,7 @@ class Text extends ContentObject {
 
   [$finalize]() {
     if (typeof this[$content] === "string") {
-      this[$content] = this[$content].replace(/\r\n/g, "\n");
+      this[$content] = this[$content].replaceAll("\r\n", "\n");
     }
   }
 
@@ -5725,11 +5836,12 @@ class TextEdit extends XFAObject {
       html = {
         name: "textarea",
         attributes: {
-          dataId: (field[$data] && field[$data][$uid]) || field[$uid],
+          dataId: field[$data]?.[$uid] || field[$uid],
           fieldId: field[$uid],
           class: ["xfaTextfield"],
           style,
           "aria-label": ariaLabel(field),
+          "aria-required": false,
         },
       };
     } else {
@@ -5737,13 +5849,19 @@ class TextEdit extends XFAObject {
         name: "input",
         attributes: {
           type: "text",
-          dataId: (field[$data] && field[$data][$uid]) || field[$uid],
+          dataId: field[$data]?.[$uid] || field[$uid],
           fieldId: field[$uid],
           class: ["xfaTextfield"],
           style,
           "aria-label": ariaLabel(field),
+          "aria-required": false,
         },
       };
+    }
+
+    if (isRequired(field)) {
+      html.attributes["aria-required"] = true;
+      html.attributes.required = true;
     }
 
     return HTMLResult.success({
@@ -5950,7 +6068,7 @@ class Value extends XFAObject {
   [$setValue](value) {
     const parent = this[$getParent]();
     if (parent instanceof Field) {
-      if (parent.ui && parent.ui.imageEdit) {
+      if (parent.ui?.imageEdit) {
         if (!this.image) {
           this.image = new Image({});
           this[$appendChild](this.image);
